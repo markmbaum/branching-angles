@@ -6,19 +6,15 @@ using Plots
 using Shapefile
 using Serialization
 using UnPack
+using DataFrames
 
 ##
 
 ordercol = :VNOrder
-assembly = deserialize(datadir("exp_pro", "mars_network_assembly"));
-angles = deserialize(datadir("exp_pro", "mars_branching_angles"));
+assembly = deserialize(datadir("exp_pro", "conus_assembly_serialized"));
+angles = deserialize(datadir("exp_pro", "conus_angles_serialized"));
 
-##
-
-table = Shapefile.Table(assembly.shppath)
-geoms = Shapefile.shapes(table)
-orders = eval( :($table.$(ordercol)) )
-@unpack networks, junctions, neighbors = assembly
+@unpack geoms, orders, networks, junctions, neighbors = assembly;
 
 ##
 
@@ -89,7 +85,7 @@ end
 
 ##
 
-case8 = findall(b -> b.case == 8, angles)
+case2 = findall(b -> b.case == 2, angles)
 
 ##
 

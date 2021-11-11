@@ -34,21 +34,24 @@ function samepoint(a::NTuple{2,Float64}, b::Shapefile.Point)::Bool
     (a[1] == b.x) & (a[2] == b.y)
 end
 
-struct NetworkAssembly
-    shppath::String #path to original shapefile
+struct NetworkAssembly{T}
+    geoms::Vector{T} #shapefile geometries
+    orders::Vector{Int64} #stream order of each geometry
     networks::Vector{Vector{Int64}} #groups of stream/valley indices for each full network
     junctions::Vector{NTuple{2,Float64}} #all junction points
     neighbors::Vector{Vector{Int64}} #stream/valley indices meeting at each junction
     juncworks::Vector{Int64} #which network each junction belongs to
 end
 
-function assemblenetworks(fn::String)
+function assemblenetworks(fn::String, ordercol::Symbol)
     
     #load geometries from the target shapefile
-    geoms = Shapefile.shapes(Shapefile.Table(fn))
+    table = DataFrame(Shapefile.Table(fn))
+    geoms = table[:,:geometry]
+    orders = table[:,ordercol]
     
     #vector of vectors of indices, to group shapes
-    networks = [[1]] #first shape automatically in initial
+    networks = [[1]] #first shape automatically starts the first group
     #add every line to a group
     @showprogress 1 "Assembling Networks " for i ∈ 2:length(geoms)
         #current shape
@@ -117,7 +120,7 @@ function assemblenetworks(fn::String)
         end
     end
     #final construction
-    NetworkAssembly(fn, networks, junctions, neighbors, juncworks)
+    NetworkAssembly(geoms, orders, networks, junctions, neighbors, juncworks)
 end
 
 #------------------------------------------------------------------------------
@@ -439,15 +442,10 @@ function findbranchingangles(geoms, junction, orders, indices)::BranchingAngleRe
     return BranchingAngleResult(junction, 0)
 end
 
-function branchingangles(NA::NetworkAssembly, ordercol::Symbol)::Vector{BranchAngleResult}
-    #setup
-    @unpack shppath, junctions, neighbors = NA
-    #load shapefile
-    df = DataFrame(Shapefile.Table(shppath))
-    #pull out the geometries and the stream order column
-    geoms = df[:,:geometry]
-    #very annoying to have resort to this just to get a column...
-    orders = df[:,ordercol]
+function branchingangles(NA::NetworkAssembly)::Vector{BranchingAngleResult}
+
+    #unpack shapes and junction information
+    @unpack geoms, orders, junctions, neighbors = NA
     #number of junctions is same as number of calls to other BranchingAngles() method
     L = length(junctions)
     

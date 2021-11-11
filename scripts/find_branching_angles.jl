@@ -20,28 +20,24 @@ MARTIAN BRANCHING ANGLES
 
 ## information about which streams are at which junctions
 
-fn = datadir("exp_raw", "mars_networks", "Hynek_Valleys_geology_draped_mercator.shp")
-marsassembly = assemblenetworks(fn);
-fn = datadir("exp_pro", "mars_network_assembly")
-serialize(fn, marsassembly)
+marsassembly = assemblenetworks(datadir("exp_raw", "mars-networks", "Hynek_Valleys_geology_draped_mercator.shp"), :VNOrder);
+serialize(datadir("exp_pro", "mars_assembly_serialized"), marsassembly)
 
 ## all the branching angles as a vector of one BranchingAngleResult struct for each junction
 
-marsangles = branchingangles(marsassembly, :VNOrder)
-fn = datadir("dir_pro", "mars_branching_angles")
-serialize(fn, marsangles)
+marsangles = branchingangles(marsassembly);
+serialize(datadir("exp_pro", "mars_angles_serialized"), marsangles)
 
 #========================================
 CONTIGUOUS UNITED STATES BRANCHING ANGLES
 ========================================#
 
 ## information about which streams are at which junctions
-fn = datadir("exp_raw", "conus-networks", "NHDFlowline_Network_NoMZ_w_basins.shp")
-conusassembly = assemblenetworks(fn)
-fn = datadir("dir_pro", "conus_network_assembly")
-serialize(fn, conusassembly)
+
+conusassembly = assemblenetworks(datadir("exp_raw", "conus-networks", "NHDFlowline_Network_NoMZ_w_basins.shp"), :StreamOrde)
+serialize(datadir("exp_pro", "conus_assembly_serialized"), conusassembly)
 
 ## all the branching angles as a vector of one BranchingAngleResult struct for each junction
-conusangles = branchingangles(conusassembly, :StreamOrde)
-fn = datadir("dir_pro", "conus_branching_angles")
-serialize(fn, conusangles)
+
+conusangles = branchingangles(conusassembly);
+serialize(datadir("exp_pro", "conus_angles_serialized"), conusangles)
