@@ -64,7 +64,7 @@ function assemblenetworks(fn::String, ordercol::Symbol)
             k = length(networks[j])
             while (k > 0) & !found
                 #geometry corresponding to group j, member k
-                geomⱼₖ = geoms[networks[j][k]]
+                @inbounds geomⱼₖ = geoms[networks[j][k]]
                 #test if the lines are intersecting
                 if intersectingends(geom.points, geomⱼₖ.points)
                     #add geom to group j
