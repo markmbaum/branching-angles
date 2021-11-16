@@ -53,7 +53,7 @@ function assemblenetworks(fn::String, ordercol::Symbol)
     #vector of vectors of indices, to group shapes
     networks = [[1]] #first shape automatically starts the first group
     #add every line to a group
-    @showprogress 1 "Assembling Networks " for i ∈ 2:length(geoms)
+    @showprogress 3000 "Assembling Networks " for i ∈ 2:length(geoms)
         #current shape
         geom = geoms[i]
         #intersection flag
