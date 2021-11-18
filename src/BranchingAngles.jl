@@ -43,6 +43,14 @@ struct NetworkAssembly{T}
     juncworks::Vector{Int64} #which network each junction belongs to
 end
 
+function Base.show(io::IO, A::NetworkAssembly{T}) where {T}
+    println(io, "NetworkAssembly:")
+    println(io, "  geometries of type $T")
+    println(io, "  $(length(A.junctions)) junctions")
+    println(io, "  $(length(A.networks)) networks")
+    print(io, "  stream orders $(sort(unique(A.orders)))")
+end
+
 function assemblenetworks(fn::String, ordercol::Symbol)
     
     #load geometries from the target shapefile
@@ -126,7 +134,7 @@ end
 #------------------------------------------------------------------------------
 export slope, valleyangle, valleyintersectionangle, valleyslope
 export BranchingAngleResult
-export findbranchingangles, branchingangles
+export branchinganglecases, branchingangles
 
 distance(x₁, y₁, x₂, y₂) = sqrt((x₁ - x₂)^2 + (y₁ - y₂)^2)
 
@@ -306,7 +314,7 @@ Base.isempty(R::BranchingAngleResult) = (R.N == 0)
 
 #-----
 
-function findbranchingangles(geoms, junction, orders, indices)::BranchingAngleResult
+function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleResult
     
     #setup
     L = length(geoms)
@@ -453,7 +461,7 @@ function branchingangles(NA::NetworkAssembly)::Vector{BranchingAngleResult}
     tasks = Vector{Task}(undef, L)
     for i ∈ 1:L
         idx = neighbors[i]
-        tasks[i] = @spawn findbranchingangles(geoms[idx], junctions[i], orders[idx], idx)
+        tasks[i] = @spawn branchinganglecases(geoms[idx], junctions[i], orders[idx], idx)
     end
 
     #fetch and return
@@ -467,13 +475,22 @@ function extract(R::Vector{BranchingAngleResult}, f::Symbol)
 end
 
 function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
-    DataFrame(
+    df = DataFrame(
         "angle" => extract(R, :θ),
         "index A" => extract(R, :i),
         "index B" => extract(R, :j),
         "order A" => extract(R, :oᵢ),
         "order B" => extract(R, :oⱼ),
     )
+    df[!,:case] = fill(-1, size(df,1))
+    n = 1
+    for r ∈ R
+        for i ∈ 1:length(r)
+            df[n,:case] = r.case
+            n += 1
+        end
+    end
+    return df
 end
 
 end

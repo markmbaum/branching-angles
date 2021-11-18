@@ -21,10 +21,18 @@ function latlon2sph(lat, lon)
     return θ, ϕ
 end
 
+function dropcases(df::DataFrame, cases=Vector{Int64})
+    idx = ones(Bool, size(df,1))
+    for case ∈ cases
+        @. idx &= (df[!,:case] != case)
+    end
+    return df[idx,:]
+end
+
 ##
 
 #branching angles are already calculated
-angles = deserialize(datadir("dir_pro", "mars_branching_angles"))
+angles = deserialize(datadir("exp_pro", "mars_angles_serialized"))
 #create a dataframe from the angles
 df = DataFrame(angles)
 #use the unprojected (geographic coords) file for subsequent slope calcs

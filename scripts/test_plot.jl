@@ -5,12 +5,11 @@ using BranchingAngles
 using Plots
 using Shapefile
 using Serialization
-using UnPack
 using DataFrames
+using UnPack
 
 ##
 
-ordercol = :VNOrder
 assembly = deserialize(datadir("exp_pro", "conus_assembly_serialized"));
 angles = deserialize(datadir("exp_pro", "conus_angles_serialized"));
 
