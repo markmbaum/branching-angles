@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p huce_bigmem      #partition
+#SBATCH -p huce_intel       #partition
 #SBATCH -N 1                #number of computing nodes
 #SBATCH -c 1                #number of cores/cpus
 #SBATCH -t 10-00:00         #time limit
