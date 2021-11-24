@@ -70,7 +70,7 @@ function plotjunction(idx::Int, geoms, orders, junctions, neighbors)
         println(i)
         plotvalley!(p, G[i], O[i], maximum(O), J)
     end
-    B = findbranchingangles(G, J, O, I)
+    B = branchinganglecases(G, J, O, I)
     println(B)
     null = isempty(B) ? " (empty)" : ""
     title!(p, "Case Number: $(B.case)$null")
@@ -84,8 +84,8 @@ end
 
 ##
 
-case2 = findall(b -> b.case == 2, angles)
+case9 = findall(b -> b.case == 9, angles)
 
 ##
 
-plotjunction(geoms, orders, junctions, neighbors)
+plotjunction(case9[1], geoms, orders, junctions, neighbors)

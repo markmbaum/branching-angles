@@ -177,7 +177,13 @@ function ODRslope(x::AbstractArray, y::AbstractArray)::Float64
     δy = V.y[end] - V.y[1]
     m₀ = δx == 0 ? 1e3 : δy/δx
     #fit for line parameters
-    sol = optimize(V, [m₀, 0.0], Newton(), autodiff=:forward)
+    sol = optimize(
+        V,
+        [m₀, 0.0],
+        Newton(),
+        autodiff=:forward
+    )
+    println(Optim.converged(sol), ' ', sol.minimizer)
     return sol.minimizer[1]
 end
 
@@ -427,7 +433,7 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
                 case
             )           
         end
-    elseif (L > 2) & (omin == 1)
+    elseif (L > 2) & (nmin == 1) & (omax > omin)
         #order 1 joining a variety of higher orders
         case = 9
         #take smallest angle made with next higher order
@@ -468,6 +474,9 @@ function branchingangles(NA::NetworkAssembly)::Vector{BranchingAngleResult}
     return BranchingAngleResult[fetch(task) for task ∈ tasks]
 end
 
+#--------------------------------------
+export dropcases
+
 flatten(x) = collect(Iterators.flatten(x))
 
 function extract(R::Vector{BranchingAngleResult}, f::Symbol)
@@ -491,6 +500,14 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
         end
     end
     return df
+end
+
+function dropcases(df::DataFrame, cases=Vector{Int64})
+    idx = ones(Bool, size(df,1))
+    for case ∈ cases
+        @. idx &= (df[!,:case] != case)
+    end
+    return df[idx,:]
 end
 
 end
