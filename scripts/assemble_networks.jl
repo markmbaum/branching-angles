@@ -14,11 +14,13 @@ The following code assembles that information and writes it into the "processed 
 directory as serialized files. The same applies to all shapefiles.
 ===#
 
+##
+
 #Martian networks
 serialize(
 	datadir(
 		"exp_pro",
-		"mars_assembly_serialized"
+		"mars_assembly"
 	),
 	assemblenetworks(
 		datadir(
@@ -30,17 +32,19 @@ serialize(
 	)
 )
 
+##
+
 #Contiguous United States (CONUS) networks
 serialize(
 	datadir(
 		"exp_pro",
-		"conus_assembly_serialized"
+		"conus_assembly"
 	),
 	assemblenetworks(
 		datadir(
 			"exp_raw",
 			"conus-networks",
-			"NHDFlowline_Network_NoMZ_w_basins.shp"
+			"conus_networks_lambert.shp"
 		),
 		:StreamOrde #[sic]
 	)

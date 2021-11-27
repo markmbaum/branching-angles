@@ -183,7 +183,6 @@ function ODRslope(x::AbstractArray, y::AbstractArray)::Float64
         Newton(),
         autodiff=:forward
     )
-    println(Optim.converged(sol), ' ', sol.minimizer)
     return sol.minimizer[1]
 end
 
@@ -275,7 +274,7 @@ struct BranchingAngleResult
     i::Vector{Int64} #indices of first shape in pairs
     j::Vector{Int64} #indices of second shape in pairs
     oᵢ::Vector{Int64} #stream orders of shapes i
-    oⱼ::Vector{Int64} #stream orders of shapes i
+    oⱼ::Vector{Int64} #stream orders of shapes j
     junction::NTuple{2,Float64} #junction point
     case::Int64 #branching case/type
     N::Int64 #vector lengths (number of angles)

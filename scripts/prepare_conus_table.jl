@@ -6,9 +6,8 @@ using Serialization
 using DataFrames
 using CSV
 using Shapefile
-using MultiAssign
 
-##
+## functions
 
 #handles issues with the slopes in the CONUS data
 #  null values are -9998.0 for some reason
@@ -27,7 +26,7 @@ df = deserialize(
 db = datadir(
     "exp_raw",
     "conus-networks",
-    "NHDFlowline_Network_NoMZ_w_basins.shp"
+    "conus_networks_lambert.shp"
 ) |> Shapefile.Table |> DataFrame
 
 ## DROP CASES 1,2,3
@@ -42,14 +41,30 @@ FTYPEB = db[df[:,"index B"],:FTYPE]
 
 df = df[(FTYPEA .== "StreamRiver") .& (FTYPEB .== "StreamRiver"), :]
 
+## indices for adding more columns
+
+A = df[!,"index A"]
+B = df[!,"index B"]
+
 ## add slope columns
 
-@multiassign df[!,"slope A"], df[!,"slope B"] = fill(NaN, size(df,1))
-for i ∈ 1:size(df,1)
-    df[i,"slope A"] = conditionslope(db[df[i,"index A"], "SLOPE"])
-    df[i,"slope B"] = conditionslope(db[df[i,"index B"], "SLOPE"])
+df[!,"slope A"] = conditionslope.(db[A,"SLOPE"])
+df[!,"slope B"] = conditionslope.(db[B,"SLOPE"])
+
+## add PRISM climate columns
+
+for col ∈ ["ppt","tdmean","tmin","tmean","tmax","elevation","vpdmin","vpdmax"]
+    df[!,col*" A"] = db[A,col]
+    df[!,col*" B"] = db[B,col]
+end
+
+## add basin and state columns
+
+for col ∈ ["HUC8", "HUC6", "HUC4", "STATES"]
+    df[!,col*" A"] = db[A,col]
+    df[!,col*" B"] = db[B,col]
 end
 
 ## write the finalized dataframe to csv
 
-CSV.write(datadir("exp_pro", "conus_branching_angles.csv"), df)
+CSV.write(datadir("exp_pro", "conus_angle_table.csv"), df)

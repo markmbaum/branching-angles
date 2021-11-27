@@ -14,7 +14,7 @@ using Base.Threads: @threads
 #mean radius of Mars
 const 𝐑ₘ = 3.398e6
 
-function projgeom(geom)
+function projectgeometry(geom)
     P = geom.points
     lon = [p.x for p ∈ P]
     lat = [p.y for p ∈ P]
@@ -32,37 +32,37 @@ end
 
 ##
 
-#branching angles are already calculated in "find_branching_angles.jl" script
+#branching angles are already calculated in "branching_angles.jl" script
 df = deserialize(
     datadir(
         "exp_pro",
         "mars_angles_serialized"
     )
 ) |> DataFrame
-#use the unprojected (geographic coords) file for subsequent slope calcs
+#need the unprojected (geographic coords) file for subsequent slope calcs
 db = datadir(
     "exp_raw",
     "mars-networks",
     "Hynek_Valleys_geology_draped.shp"
 ) |> Shapefile.Table |> DataFrame
 
+## DROP CASES 1,2,3
+
+df = dropcases(df, [1,2,3])
+
 ## fill in slope for each valley
 
 L = size(db, 1)
 db[!,:slope] = fill(NaN, L)
-@threads for i = 1:10#L
+@threads for i = 1:L
     geom = db[i,:geometry]
     #project into appropriate distance coordinates
-    x, y = projgeom(geom)
-    #elevation is in the "measure" vector
+    x, y = projectgeometry(geom)
+    #elevation is in the M vector
     z = geom.measures
     #orthogonal distance regression for slope
     db[i,:slope] = valleyslope(x, y, z)
 end
-
-## DROP CASES 1,2,3
-
-df = dropcases(df, [1,2,3])
 
 ##
 
@@ -89,4 +89,5 @@ L = size(df, 1)
 end
 
 ## write the finalized dataframe to csv
-CSV.write(datadir("exp_pro", "mars_branching_angles.csv"), df)
+
+CSV.write(datadir("exp_pro", "mars_angle_table.csv"), df)
