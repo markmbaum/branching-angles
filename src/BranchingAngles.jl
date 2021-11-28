@@ -22,9 +22,9 @@ function intersectingends(p₁, p₂)::Bool
     return false
 end
 
-function intersection(p₁, p₂)
+function intersection(p₁, p₂)::NTuple{2,Float64}
     for a ∈ (p₁[1], p₁[end]), b ∈ (p₂[1], p₂[end])
-        a == b && return convert(Float64, a.x), convert(Float64, a.y)
+        a == b && return Float64(a.x), Float64(a.y)
     end
     error("no intersecting end points available")
     return NaN, NaN
@@ -51,7 +51,7 @@ function Base.show(io::IO, A::NetworkAssembly{T}) where {T}
     print(io, "  stream orders $(sort(unique(A.orders)))")
 end
 
-function assemblenetworks(fn::String, ordercol::Symbol)
+function assemblenetworks(fn::String, ordercol::Symbol)::NetworkAssembly
     
     #load geometries from the target shapefile
     table = DataFrame(Shapefile.Table(fn))
@@ -165,8 +165,8 @@ function ValleyCoordinates(x::AbstractArray, y::AbstractArray)
 end
 
 #functor computes orthogonal distance loss function for fitting a line with slope m, intercept b
-(O::ValleyCoordinates)(m, b) = orthogonalloss(m, b, O.x, O.y, O.N)
-(O::ValleyCoordinates)(X) = O(X[1], X[2])
+(vc::ValleyCoordinates)(m, b) = orthogonalloss(m, b, O.x, O.y, O.N)
+(vc::ValleyCoordinates)(X) = vc(X[1], X[2])
 
 #use orthogonal distance to fit a line and return the slope
 function ODRslope(x::AbstractArray, y::AbstractArray)::Float64
@@ -260,11 +260,14 @@ function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J�
 end
 
 function valleyintersectionangle(J, geom₁, geom₂)
-    x₁ = [p.x for p ∈ geom₁.points]
-    y₁ = [p.y for p ∈ geom₁.points]
-    x₂ = [p.x for p ∈ geom₂.points]
-    y₂ = [p.y for p ∈ geom₂.points]
-    valleyintersectionangle(x₁, y₁, J, x₂, y₂, J)
+    valleyintersectionangle(
+        [p.x for p ∈ geom₁.points],
+        [p.y for p ∈ geom₁.points],
+        J,
+        [p.x for p ∈ geom₂.points],
+        [p.y for p ∈ geom₂.points],
+        J
+    )
 end
 
 #-----
