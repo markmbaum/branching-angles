@@ -6,6 +6,8 @@ using Serialization
 using DataFrames
 using CSV
 using Shapefile
+using MultiAssign
+using Base.Threads: @threads
 
 ## functions
 
@@ -19,7 +21,7 @@ conditionslope(s::Real)::Float64 = (s == -9998.0) ? NaN : Float64(s)
 df = deserialize(
     datadir(
         "exp_pro",
-        "conus_angles_serialized"
+        "conus_angles"
     )
 ) |> DataFrame
 #big file, takes some time to load
@@ -31,7 +33,7 @@ db = datadir(
 
 ## DROP CASES 1,2,3
 
-df = dropcases(df, [1,2,3])
+df = dropcases(df, 1, 2, 3)
 
 ## drop the non-stream/river identifiers
 
@@ -51,20 +53,17 @@ B = df[!,"index B"]
 df[!,"slope A"] = conditionslope.(db[A,"SLOPE"])
 df[!,"slope B"] = conditionslope.(db[B,"SLOPE"])
 
-## add PRISM climate columns
+## fill in junction locations in projected coords
 
-for col ∈ ["ppt","tdmean","tmin","tmean","tmax","elevation","vpdmin","vpdmax"]
-    df[!,col*" A"] = db[A,col]
-    df[!,col*" B"] = db[B,col]
-end
-
-## add basin and state columns
-
-for col ∈ ["HUC8", "HUC6", "HUC4", "STATES"]
-    df[!,col*" A"] = db[A,col]
-    df[!,col*" B"] = db[B,col]
+@multiassign df[!,:x], df[!,:y] = fill(NaN, size(df, 1))
+@threads for i = 1:size(df, 1)
+    geom₁ = db[df[i,"index A"],:geometry]
+    geom₂ = db[df[i,"index B"],:geometry]
+    x, y = intersection(geom₁.points, geom₂.points)
+    df[i,:x] = x
+    df[i,:y] = y
 end
 
 ## write the finalized dataframe to csv
 
-CSV.write(datadir("exp_pro", "conus_angle_table.csv"), df)
+CSV.write(datadir("exp_pro", "conus_angles_initial.csv"), df)

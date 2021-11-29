@@ -14,6 +14,7 @@ using Base.Threads: @threads
 #mean radius of Mars
 const 𝐑ₘ = 3.398e6
 
+#for slope calculations
 function projectgeometry(geom)
     P = geom.points
     lon = [p.x for p ∈ P]
@@ -36,7 +37,7 @@ end
 df = deserialize(
     datadir(
         "exp_pro",
-        "mars_angles_serialized"
+        "mars_angles"
     )
 ) |> DataFrame
 #need the unprojected (geographic coords) file for subsequent slope calcs
@@ -48,9 +49,9 @@ db = datadir(
 
 ## DROP CASES 1,2,3
 
-df = dropcases(df, [1,2,3])
+df = dropcases(df, 1, 2, 3)
 
-## fill in slope for each valley
+## fill in slope for every valley
 
 L = size(db, 1)
 db[!,:slope] = fill(NaN, L)
@@ -66,28 +67,21 @@ end
 
 ##
 
-#indices of streams for all angles
-A = df[:,"index A"]
-B = df[:,"index B"]
-
-#map attributes into the angles dataframe
-df[!,"geology A"] = db[A,:Unit]
-df[!,"geology B"] = db[B,:Unit]
-df[!,"slope A"] = db[A,:slope]
-df[!,"slope B"] = db[B,:slope]
+#map slope into the angles dataframe
+df[!,"slope A"] = db[df[:,"index A"],:slope]
+df[!,"slope B"] = db[df[:,"index B"],:slope]
 
 ## fill in junction locations in latitude and longitude
 
-L = size(df, 1)
-@multiassign df[!,:lat], df[!,:lon] = fill(NaN, L)
-@threads for i = 1:L
-    idx₁ = df[i,"index A"]
-    idx₂ = df[i,"index B"]
-    geom₁ = db[idx₁,:geometry]
-    geom₂ = db[idx₂,:geometry]
-    df[i,:lon], df[i,:lat] = intersection(geom₁.points, geom₂.points)
+@multiassign df[!,:lat], df[!,:lon] = fill(NaN, size(df, 1))
+@threads for i = 1:size(df, 1)
+    geom₁ = db[df[i,"index A"],:geometry]
+    geom₂ = db[df[i,"index B"],:geometry]
+    p = endintersection(geom₁.points, geom₂.points)
+    df[i,:lon] = p.x
+    df[i,:lat] = p.y
 end
 
 ## write the finalized dataframe to csv
 
-CSV.write(datadir("exp_pro", "mars_angle_table.csv"), df)
+CSV.write(datadir("exp_pro", "mars_angles_initial.csv"), df)

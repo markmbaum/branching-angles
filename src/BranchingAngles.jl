@@ -1,7 +1,8 @@
 module BranchingAngles
 
-using Base.Threads: @spawn, Task, fetch
-using Shapefile
+using Base.Threads: @threads, nthreads, Task, @spawn, fetch
+using Base.Iterators: partition
+using Shapefile: Table, Point
 using Optim
 using ProgressMeter: @showprogress
 using PrettyTables
@@ -9,38 +10,21 @@ using UnPack
 using DataFrames: DataFrame
 import DataFrames
 using MultiAssign
+using SparseArrays
+using Graphs
 
 #------------------------------------------------------------------------------
-export intersection, assemblenetworks
+export endintersection, endintersecting
+export assemblenetworks
 export NetworkAssembly
 
-function intersectingends(p₁, p₂)::Bool
-    #first check if the end points are intersecting (most likely by far)
-    for a ∈ (p₁[1], p₁[end]), b ∈ (p₂[1], p₂[end])
-        a == b && return true
-    end
-    return false
-end
-
-function intersection(p₁, p₂)::NTuple{2,Float64}
-    for a ∈ (p₁[1], p₁[end]), b ∈ (p₂[1], p₂[end])
-        a == b && return Float64(a.x), Float64(a.y)
-    end
-    error("no intersecting end points available")
-    return NaN, NaN
-end
-
-function samepoint(a::NTuple{2,Float64}, b::Shapefile.Point)::Bool
-    (a[1] == b.x) & (a[2] == b.y)
-end
 
 struct NetworkAssembly{T}
     geoms::Vector{T} #shapefile geometries
     orders::Vector{Int64} #stream order of each geometry
     networks::Vector{Vector{Int64}} #groups of stream/valley indices for each full network
-    junctions::Vector{NTuple{2,Float64}} #all junction points
+    junctions::Vector{Point} #all junction points
     neighbors::Vector{Vector{Int64}} #stream/valley indices meeting at each junction
-    juncworks::Vector{Int64} #which network each junction belongs to
 end
 
 function Base.show(io::IO, A::NetworkAssembly{T}) where {T}
@@ -51,84 +35,156 @@ function Base.show(io::IO, A::NetworkAssembly{T}) where {T}
     print(io, "  stream orders $(sort(unique(A.orders)))")
 end
 
+function endintersecting(a₁, aₙ, b₁, bₙ)::Bool
+    if (a₁ == b₁) || (a₁ == bₙ) || (aₙ == b₁) || (aₙ == bₙ)
+        return true
+    end
+    return false
+end
+
+function endintersecting(a::AbstractVector{Float64},
+                         b::AbstractVector{Float64})::Bool
+    @inbounds endintersecting(
+        (a[1], a[2]),
+        (a[3], a[4]),
+        (b[1], b[2]),
+        (b[3], b[4])
+    )
+end
+
+function endintersecting(p₁::Vector{Point}, p₂::Vector{Point})::Bool
+    @inbounds endintersecting(p₁[1], p₁[end], p₂[1], p₂[end])
+end
+
+function endintersection(p₁::Vector{Point}, p₂::Vector{Point})::Point
+    @inbounds for a ∈ (p₁[1], p₁[end])
+        for b ∈ (p₂[1], p₂[end])
+            a == b && return a
+        end
+    end
+    error("no intersecting end point found")
+end
+
+function endpointmatrix(geoms::Vector{T})::Matrix{Float64} where {T}
+    #total number of geometries
+    N = length(geoms)
+    #put all the end points in a single array
+    E = zeros(Float64, 4, N)
+    @threads for i ∈ 1:N
+        p₁ = geoms[i].points[1]
+        pₙ = geoms[i].points[end]
+        E[:,i] .= p₁.x, p₁.y, pₙ.x, pₙ.y
+    end
+    return E
+end
+
+function adjacencymatrix(E::Matrix{Float64})::SparseMatrixCSC
+    #number of geometries
+    N = size(E,2)
+    #initalize adjacency lists with self-adjacencies
+    I = [Set{Int64}(i) for i ∈ 1:N]
+    #sad N^2 process
+    @inbounds @threads for i ∈ 1:N
+        #see if geometries intersect
+        gᵢ = @view E[:,i]
+        for j ∈ 1:N
+            gⱼ = @view E[:,j]
+            if endintersecting(gᵢ, gⱼ)
+                push!(I[i], j)
+            end
+        end
+    end
+    #convert to a sparse matrix
+    A = spzeros(Bool, N, N)
+    @inbounds for i ∈ 1:N
+        for j ∈ I[i]
+            A[i,j] = true
+        end
+    end
+    return A
+end
+
+function assemblenetworks(geoms::Vector{T}) where {T}
+    #put all the end points in a single array
+    E = endpointmatrix(geoms)
+    #create adjacency matrix
+    A = adjacencymatrix(E)
+    #construct a graph from the adjacency matrix
+    G = Graph(A)
+    #separate the graph into connected components
+    connected_components(G)
+end
+
+function findjunctions(network, geoms)::Tuple{Vector{Point}, Vector{Vector{Int64}}}
+    Lₙ = length(network)
+    junctions = Point[]
+    neighbors = Vector{Int64}[]
+    @inbounds if Lₙ > 1
+        #size of junction list before additions
+        Lⱼ = length(junctions)
+        #find all junction points in the group
+        for j ∈ 1:Lₙ-1
+            geomⱼ = geoms[network[j]]
+            for k ∈ j+1:Lₙ
+                geomₖ = geoms[network[k]]
+                #see if there is an intersection point
+                if endintersecting(geomⱼ.points, geomₖ.points)
+                    #extract the intersection point
+                    p = endintersection(geomⱼ.points, geomₖ.points)
+                    #do not add a duplicate
+                    if !(p ∈ junctions)
+                        push!(junctions, p)
+                    end
+                end
+            end
+        end
+        #now find which lines meet at the newly identified junctions
+        for J ∈ junctions[Lⱼ+1:end]
+            push!(neighbors, Int64[])
+            for idx ∈ network
+                p₁ = geoms[idx].points[1]
+                pₙ = geoms[idx].points[end]
+                if (J == p₁) | (J == pₙ)
+                    push!(neighbors[end], idx)
+                end
+            end
+        end
+    end
+    return junctions, neighbors
+end
+
+function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssembly where {T}
+    #get network groups
+    networks = assemblenetworks(geoms)
+    N = length(networks)
+    println("  $N networks identified")
+    #find junction points and valleys meeting at each junction
+    tasks = Vector{Task}(undef,N)
+    for i ∈ 1:N
+        tasks[i] = @spawn findjunctions(networks[i], geoms)
+    end
+    results = [fetch(task) for task ∈ tasks]
+    junctions = flatten(map(r->r[1], results))
+    neighbors = flatten(map(r->r[2], results))
+    println("  $(length(junctions)) total junctions identified")
+    #final construction
+    NetworkAssembly(
+        geoms,
+        orders,
+        networks,
+        junctions,
+        neighbors
+    )
+end
+
 function assemblenetworks(fn::String, ordercol::Symbol)::NetworkAssembly
-    
-    #load geometries from the target shapefile
-    table = DataFrame(Shapefile.Table(fn))
+    println("assembling networks from file:\n  $fn")
+    table =  fn |> Table |> DataFrame
     geoms = table[:,:geometry]
     orders = table[:,ordercol]
-    
-    #vector of vectors of indices, to group shapes
-    networks = [[1]] #first shape automatically starts the first group
-    #add every line to a group
-    @showprogress 3000 "Assembling Networks " for i ∈ 2:length(geoms)
-        #current shape
-        geom = geoms[i]
-        #intersection flag
-        found = false
-        #count backward because line is probably more likely to be in recent groups
-        j = length(networks)
-        while (j > 0) & !found
-            k = length(networks[j])
-            while (k > 0) & !found
-                #geometry corresponding to group j, member k
-                @inbounds geomⱼₖ = geoms[networks[j][k]]
-                #test if the lines are intersecting
-                if intersectingends(geom.points, geomⱼₖ.points)
-                    #add geom to group j
-                    push!(networks[j], i)
-                    #break loops
-                    found = true
-                end
-                k -= 1
-            end
-            j -= 1
-        end
-        #if ungrouped, start a new group
-        !found && push!(networks, [i])
-    end
-
-    #find junction points and valleys meeting at each point
-    junctions = NTuple{2,Float64}[]
-    neighbors = Vector{Int64}[]
-    juncworks = Int64[]
-    @showprogress 1 "Finding junctions & neighbors " for i = 1:length(networks)
-        network = networks[i]
-        N = length(network)
-        idx = length(junctions) #track current end of junction list
-        if N > 1
-            #find all junction points in the group
-            for i ∈ 1:N
-                geomᵢ = geoms[network[i]]
-                for j ∈ i+1:N
-                    geomⱼ = geoms[network[j]]
-                    #see if there is an intersection point
-                    if intersectingends(geomᵢ.points, geomⱼ.points)
-                        #extract the intersection point
-                        p = intersection(geomᵢ.points, geomⱼ.points)
-                        #do not add a duplicate
-                        if !(p ∈ junctions)
-                            push!(junctions, p)
-                            push!(juncworks, i)
-                        end
-                    end
-                end
-            end
-            #now find which lines meet at the points
-            for p ∈ @view junctions[idx+1:end]
-                push!(neighbors, Int64[])
-                for i ∈ network
-                    p₁ = geoms[i].points[1]
-                    p₂ = geoms[i].points[end]
-                    if samepoint(p, p₁) | samepoint(p, p₂)
-                        push!(neighbors[end], i)
-                    end
-                end
-            end
-        end
-    end
-    #final construction
-    NetworkAssembly(geoms, orders, networks, junctions, neighbors, juncworks)
+    println("  $(length(geoms)) geometries present")
+    println("  stream orders $(sort(unique(orders))) present")
+    assemblenetworks(geoms, orders)
 end
 
 #------------------------------------------------------------------------------
@@ -165,7 +221,7 @@ function ValleyCoordinates(x::AbstractArray, y::AbstractArray)
 end
 
 #functor computes orthogonal distance loss function for fitting a line with slope m, intercept b
-(vc::ValleyCoordinates)(m, b) = orthogonalloss(m, b, O.x, O.y, O.N)
+(vc::ValleyCoordinates)(m, b) = orthogonalloss(m, b, vc.x, vc.y, vc.N)
 (vc::ValleyCoordinates)(X) = vc(X[1], X[2])
 
 #use orthogonal distance to fit a line and return the slope
@@ -199,12 +255,10 @@ function valleyslope(x::AbstractVector, y::AbstractVector, z::AbstractVector)::F
     return abs(s)
 end
 
-function valleyslope(geom)
-    x = [p.x for p ∈ geom.points]
-    y = [p.y for p ∈ geom.points]
-    z = geom.measures
-    valleyslope(x, y, z)
-end
+getx(geom) = [p.x for p ∈ geom.points]
+gety(geom) = [p.y for p ∈ geom.points]
+
+valleyslope(geom) = valleyslope(getx(geom), gety(geom), geom.measures)
 
 function valleyangle(x::AbstractVector, y::AbstractVector, xⱼ::Real, yⱼ::Real)
     @assert length(x) == length(y)
@@ -235,11 +289,7 @@ function valleyangle(x::AbstractVector, y::AbstractVector, xⱼ::Real, yⱼ::Rea
     return θ
 end
 
-function valleyangle(geom, J)
-    x = [p.x for p ∈ geom.points]
-    y = [p.y for p ∈ geom.points]
-    valleyangle(x, y, J...)
-end
+valleyangle(geom, J) = valleyangle(getx(geom), gety(geom), J.x, J.y)
 
 function minorangle(θ)
     while (θ > π) | (θ < -π)
@@ -248,11 +298,11 @@ function minorangle(θ)
     return θ
 end
 
-function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J₁::NTuple{2},
-                                 x₂::AbstractVector, y₂::AbstractVector, J₂::NTuple{2})
+function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J₁::Point,
+                                 x₂::AbstractVector, y₂::AbstractVector, J₂::Point)
     #direction angle of each valley
-    θ₁ = valleyangle(x₁, y₁, J₁...)
-    θ₂ = valleyangle(x₂, y₂, J₂...)
+    θ₁ = valleyangle(x₁, y₁, J₁.x, J₁.y)
+    θ₂ = valleyangle(x₂, y₂, J₂.x, J₂.y)
     #difference between the angles
     ϕ = θ₁ - θ₂
     #correct for results θ > π or θ < -π
@@ -261,12 +311,8 @@ end
 
 function valleyintersectionangle(J, geom₁, geom₂)
     valleyintersectionangle(
-        [p.x for p ∈ geom₁.points],
-        [p.y for p ∈ geom₁.points],
-        J,
-        [p.x for p ∈ geom₂.points],
-        [p.y for p ∈ geom₂.points],
-        J
+        getx(geom₁), gety(geom₁), J,
+        getx(geom₂), gety(geom₂), J
     )
 end
 
@@ -278,7 +324,7 @@ struct BranchingAngleResult
     j::Vector{Int64} #indices of second shape in pairs
     oᵢ::Vector{Int64} #stream orders of shapes i
     oⱼ::Vector{Int64} #stream orders of shapes j
-    junction::NTuple{2,Float64} #junction point
+    junction::Point #junction location
     case::Int64 #branching case/type
     N::Int64 #vector lengths (number of angles)
 end
@@ -290,7 +336,8 @@ function Base.show(io::IO, R::BranchingAngleResult)
         Any[R.θ rad2deg.(R.θ) R.i R.j R.oᵢ R.oⱼ],
         ["Angle (rad)", "Angle (deg)", "Index A", "Index B", "Order A", "Order B"])
     print(io, " case number: $(R.case)\n")
-    print(io, " junction:\n   x = $(R.junction[1])\n   y = $(R.junction[2])\n")
+    print(io, " junction:\n   x = $(R.junction.x)\n   y = $(R.junction.y)\n")
+    print(io, " $(R.njunc) geometries at junction")
 end
 
 function BranchingAngleResult(θ::Vector{Float64},
@@ -298,7 +345,7 @@ function BranchingAngleResult(θ::Vector{Float64},
                               j::Vector{Int64},
                               oᵢ::Vector{Int64},
                               oⱼ::Vector{Int64},
-                              junction::NTuple{2,Float64},
+                              junction::Point,
                               case::Int64)
     @assert length(θ) == length(i) == length(j) == length(oᵢ) == length(oⱼ)
     BranchingAngleResult(θ, i, j, oᵢ, oⱼ, junction, case, length(θ))
@@ -309,12 +356,12 @@ function BranchingAngleResult(θ::Float64,
                               j::Int64,
                               oᵢ::Int64,
                               oⱼ::Int64,
-                              junction::NTuple{2,Float64},
+                              junction::Point,
                               case::Int64)
     BranchingAngleResult([θ], [i], [j], [oᵢ], [oⱼ], junction, case)
 end
 
-function BranchingAngleResult(junction::NTuple{2,Float64}, case::Int64)
+function BranchingAngleResult(junction::Point, case::Int64)
     BranchingAngleResult([], [], [], [], [], junction, case, 0)
 end
 
@@ -323,8 +370,9 @@ Base.isempty(R::BranchingAngleResult) = (R.N == 0)
 #-----
 
 function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleResult
-    
+
     #setup
+    @assert length(geoms) == length(indices) == length(orders)
     L = length(geoms)
     idx = sortperm(orders)
     G = geoms[idx]
@@ -344,34 +392,55 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
     configurations, but it's likely not perfect or complete. The case numbers 
     used below are leftover from the original Python implementation (not used anymore).
     ==#
-    if (L == 2) & (omin == omax == 1)
-        #two lonely order 1 streams
-        case = 1
-        θ = valleyintersectionangle(J, G[1], G[2])
-        return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
-    elseif (L == 2) & (omin != omax)
-        #two lonely streams, one higher order, one lower
-        case = 2
-        θ = valleyintersectionangle(J, G[1], G[2])
-        return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
-    elseif (L == 2) & (omin == omax) & (omin != 1)
-        #two lonely higher order streams
-        case = 3
-        θ = valleyintersectionangle(J, G[1], G[2])
-        return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
-    elseif (L == 3) & (nmin == 2) & (nmax == 1)
-        #two lower order flowing into a single higher order
-        case = 4
-        θ = valleyintersectionangle(J, G[1], G[2])
-        return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+    if L == 2
+        if omin == omax == 1
+            #two lonely order 1 streams
+            case = 1
+            θ = valleyintersectionangle(J, G[1], G[2])
+            return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+        elseif omin != omax
+            #two lonely streams, one higher order, one lower
+            case = 2
+            θ = valleyintersectionangle(J, G[1], G[2])
+            return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+        elseif (omin == omax) & (omin != 1)
+            #two lonely higher order streams
+            case = 3
+            θ = valleyintersectionangle(J, G[1], G[2])
+            return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+        end
+    elseif L == 3
+        if nmin == 2
+            #two lower order flowing into a single higher order
+            case = 4
+            θ = valleyintersectionangle(J, G[1], G[2])
+            return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+        elseif (nmin == 1) & (nmax == 2)# & (omin == omax -1)
+            #single lower order flowing into two higher order (tributary meeting main channel)
+            case = 5
+            #take the smaller one
+            θ₁ = valleyintersectionangle(J, G[1], G[2])
+            θ₂ = valleyintersectionangle(J, G[1], G[3])
+            if θ₁ < θ₂
+                return BranchingAngleResult(θ₁, I[1], I[2], O[1], O[2], J, case)
+            else
+                return BranchingAngleResult(θ₂, I[1], I[3], O[1], O[3], J, case)
+            end
+        elseif (nmin == 1) & (nmax == 1)
+            #three of different orders
+            case = 6
+            #take the first pair
+            θ = valleyintersectionangle(J, G[1], G[2])
+            return BranchingAngleResult(θ, I[1], I[2], O[1], O[2], J, case)
+        end
     elseif (nmin > 2) & (nmax == 1) & (omin == omax - 1)
         #more than two flowing into a single higher order
-        case = 5
+        case = 7
         #first calculate the angles of each valley (not intersection angles yet)
         ϕ = [valleyangle(g, J) for g ∈ G]
         #fully rotate angles of low order streams so that their values are greater than the high order angle
         for i ∈ 1:L-1
-            @inbounds if ϕ[i] < ϕ[L]
+            if ϕ[i] < ϕ[L]
                 ϕ[i] += 2π
             end
         end
@@ -385,21 +454,6 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
         #now the intersection angles are in sequence
         θ = ϕ |> diff .|> minorangle .|> abs
         return BranchingAngleResult(θ, I[1:N-1], I[2:N], O[1:N-1], O[2:N], J, case)
-    elseif (L == 3) & (nmin == 1) & (nmax == 2)# & (omin == omax -1)
-        #single lower order flowing into two higher order (tributary meeting main channel)
-        case = 6
-        #take the smaller one
-        θ₁ = valleyintersectionangle(J, G[1], G[2])
-        θ₂ = valleyintersectionangle(J, G[1], G[3])
-        if θ₁ < θ₂
-            return BranchingAngleResult(θ₁, I[1], I[2], O[1], O[2], J, case)
-        else
-            return BranchingAngleResult(θ₂, I[1], I[3], O[1], O[3], J, case)
-        end
-    elseif (L > 2) & (omin == omax) & (omin != 1)
-        #more than two higher order, alone?
-        case = 7
-        return BranchingAngleResult(J, case)
     elseif (L == 4) & (nmin == 2) & (nmax == 2)
         #two tributaries meeting main channel
         case = 8
@@ -452,28 +506,30 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
             end
         end
         return BranchingAngleResult(θ, p[1], p[2], o[1], o[2], J, case)
+    elseif (L > 2) & (omin == omax) & (omin != 1)
+        #more than two higher order, alone?
+        case = 10
+        return BranchingAngleResult(J, case)
     end
 
-    #empty result
-    return BranchingAngleResult(junction, 0)
+    return BranchingAngleResult(J, 0)
 end
 
 function branchingangles(NA::NetworkAssembly)::Vector{BranchingAngleResult}
 
     #unpack shapes and junction information
     @unpack geoms, orders, junctions, neighbors = NA
-    #number of junctions is same as number of calls to other BranchingAngles() method
-    L = length(junctions)
+    #check each junction for branching angles
+    Lⱼ = length(junctions)
     
     #compute branching angles for each junction asynchronously
-    tasks = Vector{Task}(undef, L)
-    for i ∈ 1:L
-        idx = neighbors[i]
-        tasks[i] = @spawn branchinganglecases(geoms[idx], junctions[i], orders[idx], idx)
+    res = Vector{BranchingAngleResult}(undef,Lⱼ)
+    @threads for i ∈ 1:Lⱼ
+        J = junctions[i]
+        n = neighbors[i]
+        res[i] = branchinganglecases(geoms[n], J, orders[n], n)
     end
-
-    #fetch and return
-    return BranchingAngleResult[fetch(task) for task ∈ tasks]
+    return res
 end
 
 #--------------------------------------
@@ -494,17 +550,17 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
         "order B" => extract(R, :oⱼ),
     )
     df[!,:case] = fill(-1, size(df,1))
-    n = 1
+    i = 1
     for r ∈ R
-        for i ∈ 1:length(r)
-            df[n,:case] = r.case
-            n += 1
+        for _ ∈ 1:r.N
+            df[i,:case] = r.case
+            i += 1
         end
     end
     return df
 end
 
-function dropcases(df::DataFrame, cases=Vector{Int64})
+function dropcases(df::DataFrame, cases::Int...)
     idx = ones(Bool, size(df,1))
     for case ∈ cases
         @. idx &= (df[!,:case] != case)
