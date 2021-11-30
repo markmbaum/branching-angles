@@ -30,7 +30,7 @@ df = datadir(
     "exp_raw",
     "mars-networks",
     "Hynek_Valleys_geology.shp"
-) |> Shapefile.Table |> DataFrame
+) |> Shapefile.Table |> DataFrame;
 
 ##
 

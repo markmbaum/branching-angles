@@ -2,7 +2,7 @@ module BranchingAngles
 
 using Base.Threads: @threads, nthreads, Task, @spawn, fetch
 using Base.Iterators: partition
-using Shapefile: Table, Point
+using Shapefile: Table
 using Optim
 using ProgressMeter: @showprogress
 using PrettyTables
@@ -23,7 +23,7 @@ struct NetworkAssembly{T}
     geoms::Vector{T} #shapefile geometries
     orders::Vector{Int64} #stream order of each geometry
     networks::Vector{Vector{Int64}} #groups of stream/valley indices for each full network
-    junctions::Vector{Point} #all junction points
+    junctions::Vector{NTuple{2,Float64}} #all junction points
     neighbors::Vector{Vector{Int64}} #stream/valley indices meeting at each junction
 end
 
@@ -42,6 +42,19 @@ function endintersecting(a₁, aₙ, b₁, bₙ)::Bool
     return false
 end
 
+function endintersection(a₁, aₙ, b₁, bₙ)
+    if a₁ == b₁
+        return a₁
+    elseif a₁ == bₙ
+        return a₁
+    elseif aₙ == b₁
+        return aₙ
+    elseif aₙ == bₙ
+        return aₙ
+    end
+    error("no intersecting end point found")
+end
+
 function endintersecting(a::AbstractVector{Float64},
                          b::AbstractVector{Float64})::Bool
     @inbounds endintersecting(
@@ -52,17 +65,15 @@ function endintersecting(a::AbstractVector{Float64},
     )
 end
 
-function endintersecting(p₁::Vector{Point}, p₂::Vector{Point})::Bool
-    @inbounds endintersecting(p₁[1], p₁[end], p₂[1], p₂[end])
-end
-
-function endintersection(p₁::Vector{Point}, p₂::Vector{Point})::Point
-    @inbounds for a ∈ (p₁[1], p₁[end])
-        for b ∈ (p₂[1], p₂[end])
-            a == b && return a
-        end
+function endintersection(a::AbstractVector{Float64},
+                         b::AbstractVector{Float64})::NTuple{2,Float64}
+    @inbounds begin
+        a₁ = a[1], a[2]
+        aₙ = a[3], a[4]
+        b₁ = b[1], b[2]
+        bₙ = b[3], b[4]
     end
-    error("no intersecting end point found")
+    endintersection(a₁, aₙ, b₁, bₙ)
 end
 
 function endpointmatrix(geoms::Vector{T})::Matrix{Float64} where {T}
@@ -71,9 +82,11 @@ function endpointmatrix(geoms::Vector{T})::Matrix{Float64} where {T}
     #put all the end points in a single array
     E = zeros(Float64, 4, N)
     @threads for i ∈ 1:N
-        p₁ = geoms[i].points[1]
-        pₙ = geoms[i].points[end]
-        E[:,i] .= p₁.x, p₁.y, pₙ.x, pₙ.y
+        L = length(geoms[i].points)
+        E[1,i] = geoms[i].points[1].x
+        E[2,i] = geoms[i].points[1].y
+        E[3,i] = geoms[i].points[L].x
+        E[4,i] = geoms[i].points[L].y
     end
     return E
 end
@@ -104,9 +117,8 @@ function adjacencymatrix(E::Matrix{Float64})::SparseMatrixCSC
     return A
 end
 
-function assemblenetworks(geoms::Vector{T}) where {T}
-    #put all the end points in a single array
-    E = endpointmatrix(geoms)
+function assemblenetworks(E::Matrix{Float64}) where {T}
+    @assert size(E,1) == 4
     #create adjacency matrix
     A = adjacencymatrix(E)
     #construct a graph from the adjacency matrix
@@ -115,58 +127,72 @@ function assemblenetworks(geoms::Vector{T}) where {T}
     connected_components(G)
 end
 
-function findjunctions(network, geoms)::Tuple{Vector{Point}, Vector{Vector{Int64}}}
+function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
+    @assert size(F,1) == 4
     Lₙ = length(network)
-    junctions = Point[]
+    x = Float64[] #first coordinate of junction points
+    y = Float64[] #second coordinate of junction points
+    s = Set{NTuple{2,Float64}}() #for preventing duplicates
     neighbors = Vector{Int64}[]
     @inbounds if Lₙ > 1
-        #size of junction list before additions
-        Lⱼ = length(junctions)
         #find all junction points in the group
         for j ∈ 1:Lₙ-1
-            geomⱼ = geoms[network[j]]
+            gⱼ = @view F[:,j]
             for k ∈ j+1:Lₙ
-                geomₖ = geoms[network[k]]
+                gₖ = @view F[:,k]
                 #see if there is an intersection point
-                if endintersecting(geomⱼ.points, geomₖ.points)
+                if endintersecting(gⱼ, gₖ)
                     #extract the intersection point
-                    p = endintersection(geomⱼ.points, geomₖ.points)
+                    p = endintersection(gⱼ, gₖ)
                     #do not add a duplicate
-                    if !(p ∈ junctions)
-                        push!(junctions, p)
+                    if !(p ∈ s)
+                        push!(x, p[1])
+                        push!(y, p[2])
+                        push!(s, p)
                     end
                 end
             end
         end
         #now find which lines meet at the newly identified junctions
-        for J ∈ junctions[Lⱼ+1:end]
+        for j ∈ 1:length(x)
+            #junction j coordinates
+            pⱼ = x[j], y[j]
+            #start a new neighborhood around the junction
             push!(neighbors, Int64[])
-            for idx ∈ network
-                p₁ = geoms[idx].points[1]
-                pₙ = geoms[idx].points[end]
-                if (J == p₁) | (J == pₙ)
-                    push!(neighbors[end], idx)
+            #check which geometries are in the hood
+            for i ∈ 1:length(network)
+                a = F[1,i], F[2,i]
+                b = F[3,i], F[4,i]
+                if (pⱼ == a) | (pⱼ == b)
+                    push!(neighbors[end], network[i])
                 end
             end
         end
     end
-    return junctions, neighbors
+    return x, y, neighbors
 end
 
 function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssembly where {T}
+    @assert length(geoms) == length(orders)
+    #end points only
+    E = endpointmatrix(geoms)
     #get network groups
-    networks = assemblenetworks(geoms)
+    networks = assemblenetworks(E)
     N = length(networks)
-    println("  $N networks identified")
+    println(stdout, "$N networks identified")
     #find junction points and valleys meeting at each junction
     tasks = Vector{Task}(undef,N)
     for i ∈ 1:N
-        tasks[i] = @spawn findjunctions(networks[i], geoms)
+        tasks[i] = @spawn findjunctions(networks[i], E[:,networks[i]])
     end
-    results = [fetch(task) for task ∈ tasks]
-    junctions = flatten(map(r->r[1], results))
-    neighbors = flatten(map(r->r[2], results))
-    println("  $(length(junctions)) total junctions identified")
+    results = map(fetch, tasks)
+    #structure the results
+    x = flatten(map(r->r[1], results))
+    y = flatten(map(r->r[2], results))
+    junctions = collect(zip(x,y))
+    neighbors = flatten(map(r->r[3], results))
+    println(stdout, "$(length(junctions)) total junctions identified")
+    flush(stdout)
     #final construction
     NetworkAssembly(
         geoms,
@@ -178,12 +204,13 @@ function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssem
 end
 
 function assemblenetworks(fn::String, ordercol::Symbol)::NetworkAssembly
-    println("assembling networks from file:\n  $fn")
+    println(stdout, "assembling networks from file: $fn")
     table =  fn |> Table |> DataFrame
     geoms = table[:,:geometry]
     orders = table[:,ordercol]
-    println("  $(length(geoms)) geometries present")
-    println("  stream orders $(sort(unique(orders))) present")
+    println(stdout, "$(length(geoms)) geometries present")
+    println(stdout, "stream orders present: $(sort(unique(orders)))")
+    flush(stdout)
     assemblenetworks(geoms, orders)
 end
 
@@ -289,7 +316,9 @@ function valleyangle(x::AbstractVector, y::AbstractVector, xⱼ::Real, yⱼ::Rea
     return θ
 end
 
-valleyangle(geom, J) = valleyangle(getx(geom), gety(geom), J.x, J.y)
+function valleyangle(geom, J::NTuple{2,Float64})
+    valleyangle(getx(geom), gety(geom), J[1], J[2])
+end
 
 function minorangle(θ)
     while (θ > π) | (θ < -π)
@@ -298,11 +327,11 @@ function minorangle(θ)
     return θ
 end
 
-function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J₁::Point,
-                                 x₂::AbstractVector, y₂::AbstractVector, J₂::Point)
+function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J₁::NTuple{2,Float64},
+                                 x₂::AbstractVector, y₂::AbstractVector, J₂::NTuple{2,Float64})
     #direction angle of each valley
-    θ₁ = valleyangle(x₁, y₁, J₁.x, J₁.y)
-    θ₂ = valleyangle(x₂, y₂, J₂.x, J₂.y)
+    θ₁ = valleyangle(x₁, y₁, J₁[1], J₁[2])
+    θ₂ = valleyangle(x₂, y₂, J₂[1], J₂[2])
     #difference between the angles
     ϕ = θ₁ - θ₂
     #correct for results θ > π or θ < -π
@@ -324,7 +353,7 @@ struct BranchingAngleResult
     j::Vector{Int64} #indices of second shape in pairs
     oᵢ::Vector{Int64} #stream orders of shapes i
     oⱼ::Vector{Int64} #stream orders of shapes j
-    junction::Point #junction location
+    junction::NTuple{2,Float64} #junction location
     case::Int64 #branching case/type
     N::Int64 #vector lengths (number of angles)
 end
@@ -345,7 +374,7 @@ function BranchingAngleResult(θ::Vector{Float64},
                               j::Vector{Int64},
                               oᵢ::Vector{Int64},
                               oⱼ::Vector{Int64},
-                              junction::Point,
+                              junction::NTuple{2,Float64},
                               case::Int64)
     @assert length(θ) == length(i) == length(j) == length(oᵢ) == length(oⱼ)
     BranchingAngleResult(θ, i, j, oᵢ, oⱼ, junction, case, length(θ))
@@ -356,12 +385,12 @@ function BranchingAngleResult(θ::Float64,
                               j::Int64,
                               oᵢ::Int64,
                               oⱼ::Int64,
-                              junction::Point,
+                              junction::NTuple{2,Float64},
                               case::Int64)
     BranchingAngleResult([θ], [i], [j], [oᵢ], [oⱼ], junction, case)
 end
 
-function BranchingAngleResult(junction::Point, case::Int64)
+function BranchingAngleResult(junction::NTuple{2,Float64}, case::Int64)
     BranchingAngleResult([], [], [], [], [], junction, case, 0)
 end
 

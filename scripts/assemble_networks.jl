@@ -7,11 +7,11 @@ using Serialization
 #===
 To calculate branching angles, first we need to gather some information 
 about the valley networks. There are two critical groups of information
-for the branching angle calculations that come next.
-  1. All the junction points where valleys intersect
-  2. The indices of the valleys intersecting at those junction points
+for the branching angle calculations:
+  1. junction points where valleys intersect
+  2. indices of the valleys intersecting at those junction points
 The following code assembles that information and writes it into the "processed data"
-directory as serialized files. The same applies to all shapefiles.
+directory as serialized files.
 ===#
 
 ##

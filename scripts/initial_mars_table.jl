@@ -77,7 +77,12 @@ df[!,"slope B"] = db[df[:,"index B"],:slope]
 @threads for i = 1:size(df, 1)
     geom₁ = db[df[i,"index A"],:geometry]
     geom₂ = db[df[i,"index B"],:geometry]
-    p = endintersection(geom₁.points, geom₂.points)
+    p = endintersection(
+        geom₁.points[1],
+        geom₁.points[end],
+        geom₂.points[1],
+        geom₂.points[end]
+    )
     df[i,:lon] = p.x
     df[i,:lat] = p.y
 end
