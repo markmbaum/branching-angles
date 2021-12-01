@@ -578,11 +578,16 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
         "order A" => extract(R, :oᵢ),
         "order B" => extract(R, :oⱼ),
     )
-    df[!,:case] = fill(-1, size(df,1))
+    L = size(df,1)
+    df[!,:case] = fill(-1, L)
+    df[!,:x] = fill(NaN, L)
+    df[!,:y] = fill(NaN, L)
     i = 1
     for r ∈ R
         for _ ∈ 1:r.N
             df[i,:case] = r.case
+            df[i,:x] = r.junction[1]
+            df[i,:y] = r.junction[2]
             i += 1
         end
     end

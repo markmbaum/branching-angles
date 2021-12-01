@@ -53,17 +53,6 @@ B = df[!,"index B"]
 df[!,"slope A"] = conditionslope.(db[A,"SLOPE"])
 df[!,"slope B"] = conditionslope.(db[B,"SLOPE"])
 
-## fill in junction locations in projected coords
-
-@multiassign df[!,:x], df[!,:y] = fill(NaN, size(df, 1))
-@threads for i = 1:size(df, 1)
-    geom₁ = db[df[i,"index A"],:geometry]
-    geom₂ = db[df[i,"index B"],:geometry]
-    x, y = intersection(geom₁.points, geom₂.points)
-    df[i,:x] = x
-    df[i,:y] = y
-end
-
 ## write the finalized dataframe to csv
 
 CSV.write(datadir("exp_pro", "conus_angles_initial.csv"), df)
