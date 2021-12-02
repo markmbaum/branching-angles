@@ -8,7 +8,7 @@ using CSV
 ##
 
 function run(fnshp::String, orders::Symbol, fnout::String)::Nothing
-    #network and branch into a dataframe of unvarnished results
+    #network and branch into a dataframe of unfiltered results
     df = assemblenetworks(fnshp, orders) |> branchingangles |> DataFrame
     #write to a csv file
     CSV.write(fnout, df)

@@ -1,10 +1,9 @@
 module BranchingAngles
 
-using Base.Threads: @threads, nthreads, Task, @spawn, fetch
+using Base.Threads: @threads, Task, @spawn, fetch
 using Base.Iterators: partition
 using Shapefile: Table
 using Optim
-using ProgressMeter: @showprogress
 using PrettyTables
 using UnPack
 using DataFrames: DataFrame
@@ -580,8 +579,7 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
     )
     L = size(df,1)
     df[!,:case] = fill(-1, L)
-    df[!,:x] = fill(NaN, L)
-    df[!,:y] = fill(NaN, L)
+    @multiassign df[!,:x], df[!,:y] = fill(NaN, L)
     i = 1
     for r ∈ R
         for _ ∈ 1:r.N

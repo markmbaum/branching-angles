@@ -2,7 +2,6 @@ using DrWatson
 @quickactivate "Martian Branching Angles"
 push!(LOAD_PATH, srcdir())
 using BranchingAngles
-using Serialization
 using DataFrames
 using CSV
 using Shapefile
@@ -34,12 +33,7 @@ end
 ##
 
 #branching angles are already calculated in "branching_angles.jl" script
-df = deserialize(
-    datadir(
-        "exp_pro",
-        "mars_angles"
-    )
-) |> DataFrame
+df = CSV.read(datadir("exp_pro", "mars_angles_raw.csv"), DataFrame)
 #need the unprojected (geographic coords) file for subsequent slope calcs
 db = datadir(
     "exp_raw",
@@ -89,4 +83,4 @@ end
 
 ## write the finalized dataframe to csv
 
-CSV.write(datadir("exp_pro", "mars_angles_initial.csv"), df)
+CSV.write(datadir("exp_pro", "mars_angles.csv"), df)
