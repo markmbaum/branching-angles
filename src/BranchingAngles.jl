@@ -9,7 +9,6 @@ using UnPack
 using DataFrames: DataFrame
 import DataFrames
 using MultiAssign
-using SparseArrays
 using Graphs
 
 #------------------------------------------------------------------------------
@@ -78,24 +77,26 @@ end
 function endpointmatrix(geoms::Vector{T})::Matrix{Float64} where {T}
     #total number of geometries
     N = length(geoms)
-    #put all the end points in a single array
+    #put all the end points into one array/matrix
     E = zeros(Float64, 4, N)
-    @threads for i ∈ 1:N
-        L = length(geoms[i].points)
-        E[1,i] = geoms[i].points[1].x
-        E[2,i] = geoms[i].points[1].y
-        E[3,i] = geoms[i].points[L].x
-        E[4,i] = geoms[i].points[L].y
+    @inbounds @threads for i ∈ 1:N
+        p = geoms[i].points
+        L = length(p)
+        E[1,i] = p[1].x
+        E[2,i] = p[1].y
+        E[3,i] = p[L].x
+        E[4,i] = p[L].y
     end
     return E
 end
 
-function adjacencymatrix(E::Matrix{Float64})::SparseMatrixCSC
+function adjacencylists(E::Matrix{Float64})::Vector{Set{Int64}}
     #number of geometries
+    @assert size(E,1) == 4
     N = size(E,2)
-    #initalize adjacency lists with self-adjacencies
-    I = [Set{Int64}(i) for i ∈ 1:N]
-    #sad N^2 process
+    #initalize adjacency lists
+    I = [Set{Int64}() for _ ∈ 1:N]
+    #generate adjacency lists in parallel (not sure if graphs are thread-safe)
     @inbounds @threads for i ∈ 1:N
         #see if geometries intersect
         gᵢ = @view E[:,i]
@@ -106,24 +107,25 @@ function adjacencymatrix(E::Matrix{Float64})::SparseMatrixCSC
             end
         end
     end
-    #convert to a sparse matrix
-    A = spzeros(Bool, N, N)
-    @inbounds for i ∈ 1:N
-        for j ∈ I[i]
-            A[i,j] = true
-        end
-    end
-    return A
+    return I
 end
 
-function assemblenetworks(E::Matrix{Float64}) where {T}
+function adjacencygraph(I::Vector{Set{Int64}})::SimpleGraph{Int64}
+    #create the graph
+    N = length(I)
+    G = Graph(N)
+    @inbounds for i ∈ 1:N
+        for j ∈ I[i]
+            add_edge!(G, i, j)
+        end
+    end
+    return G
+end
+
+function assemblenetworks(E::Matrix{Float64})
     @assert size(E,1) == 4
-    #create adjacency matrix
-    A = adjacencymatrix(E)
-    #construct a graph from the adjacency matrix
-    G = Graph(A)
-    #separate the graph into connected components
-    connected_components(G)
+    #create adjacency graph and dissolve it all at once
+    E |> adjacencylists |> adjacencygraph |> connected_components
 end
 
 function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
@@ -171,8 +173,7 @@ function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
     return x, y, neighbors
 end
 
-function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssembly where {T}
-    @assert length(geoms) == length(orders)
+function assemblenetworks(geoms::Vector{T}) where {T}
     #end points only
     E = endpointmatrix(geoms)
     #get network groups
@@ -192,6 +193,12 @@ function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssem
     neighbors = flatten(map(r->r[3], results))
     println(stdout, "$(length(junctions)) total junctions identified")
     flush(stdout)
+    return networks, junctions, neighbors
+end
+
+function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssembly where {T}
+    @assert length(geoms) == length(orders)
+    networks, junctions, neighbors = assemblenetworks(geoms)
     #final construction
     NetworkAssembly(
         geoms,

@@ -12,6 +12,8 @@ function run(fnshp::String, orders::Symbol, fnout::String)::Nothing
     df = assemblenetworks(fnshp, orders) |> branchingangles |> DataFrame
     #write to a csv file
     CSV.write(fnout, df)
+    println(stdout, "file written: $fnout")
+    flush(stdout)
     return nothing
 end
 
