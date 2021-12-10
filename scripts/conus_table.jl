@@ -44,4 +44,4 @@ df[!,"slope B"] = conditionslope.(db[df[!,"index B"],"SLOPE"])
 
 ## write the finalized dataframe to csvs
 
-CSV.write(datadir("exp_pro", "conus_angles.csv"), df)
+CSV.write(datadir("exp_pro", "conus_anglesX.csv"), df)
