@@ -1,5 +1,5 @@
 using DrWatson
-@quickactivate "Martian Branching Angles"
+@quickactivate "Branching Angles"
 using DataFrames
 using CSV
 

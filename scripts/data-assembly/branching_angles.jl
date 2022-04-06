@@ -1,5 +1,5 @@
 using DrWatson
-@quickactivate "Martian Branching Angles"
+@quickactivate "Branching Angles"
 push!(LOAD_PATH, srcdir())
 using BranchingAngles
 using DataFrames

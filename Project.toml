@@ -1,4 +1,4 @@
-name = "Martian Branching Angles"
+name = "Branching Angles"
 authors = ["Mark Baum <markmbaum@protonmail.com>"]
 
 [deps]
@@ -10,8 +10,9 @@ MultiAssign = "5e2c8b86-4afa-40de-bd09-d9d381e5dc2b"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+Seaborn = "d2ef9438-c967-53ab-8060-373fdd9e13eb"
 Shapefile = "8e980c4a-a4fe-5da2-b3a7-4b4b0353a2f4"
 UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [compat]
-julia = "1.6.1"
+julia = "1.7"

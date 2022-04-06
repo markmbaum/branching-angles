@@ -1,3 +1,13 @@
-size of geographic grouping incfluences correlations significantly, huc4 appears to be sweet spots
+size of geographic grouping influences correlations significantly, huc4 appears to be sweet spot
 
-
+potential sections
+- conus description, feature importance
+- role of the vegetation index
+  - can it be understood by looking at high-veg conus and low-veg conus
+  - cluster analysis?
+- basin scale conus description, geographic sampling at different scales
+- how would loss of low order streams bias mars results
+- best prediction of Mars climate
+  - controlling for vegetation
+  - potentially with uncertainty due to stream ordering
+  - including by geologic units
