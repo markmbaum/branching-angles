@@ -1,6 +1,6 @@
-from os.path import join, isfile
-from numpy import log10
-from pandas import read_csv, read_pickle
+from os.path import join
+from numpy import log10, sqrt
+from pandas import read_csv, read_pickle, cut
 
 plotsdir = join(
     '..',
@@ -87,3 +87,40 @@ def rename_cols(df):
         if 'tmean' in col:
             rename_col(df, col, col.replace('tmean', 'T'))
     return None
+
+def binmeanplot(ax, df, cols, x, bins=10):
+    df = df.copy()
+    if x == 'angle':
+        df['angle_bin'] = cut(df.angle, bins=bins, right=True)
+        df['bin_center'] = [(I.left + I.right)/2 for I in df.angle_bin]
+        g = df.groupby('angle_bin')
+        m = g.mean()
+        s = g.std()/sqrt(g.count())
+        for col in cols:
+            ax.errorbar(
+                m.angle,
+                m[col],
+                s[col],
+                fmt='.-',
+                label=col
+            )
+    elif x == 'cols':
+        for col in cols:
+            sl = df[['angle',col]].copy()
+            sl['bin'] = cut(sl[col], bins=bins)
+            sl['bin_center'] = [(I.left + I.right)/2 for I in sl['bin']]
+            g = sl.groupby('bin_center')
+            m = g.mean()
+            s = g.std()/sqrt(g.count())
+            ax.errorbar(
+                m[col],
+                m.angle,
+                s.angle,
+                fmt='.-',
+                label=col
+            )
+    else:
+        raise(StandardError('incorrect x argument'))
+
+    return None
+# %%

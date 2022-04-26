@@ -1,7 +1,10 @@
-from pandas import read_csv
+# %%
+
 from geopandas import read_file
 
-from setup import *
+from shared import *
+
+# %%
 
 # setup CONUS data
 df = read_csv(fnconus)
@@ -13,6 +16,8 @@ basins = ['huc2', 'huc4', 'huc6', 'huc8']
 fnshps = ['wbdhu2.shp', 'wbdhu4.shp', 'wbdhu6.shp', 'wbdhu8.shp']
 # output directory
 dirout = join(datadir, 'exp_pro', 'basin-means')
+
+# %%
 
 for (basin, fnshp) in zip(basins, fnshps):
     print(basin)
@@ -31,3 +36,5 @@ for (basin, fnshp) in zip(basins, fnshps):
     fn = join(dirout, basin + '_means.shp')
     shp.to_file(fn)
     print('  file written:', fn)
+
+# %%

@@ -2,20 +2,22 @@ module BranchingAngles
 
 using Base.Threads: @threads, Task, @spawn, fetch
 using Base.Iterators: partition
-using Shapefile: Table
+using CSV
+using DataFrames: DataFrame, transform!, rename!
+import DataFrames
+using DrWatson
+using Graphs
+using MultiAssign
 using Optim
 using PrettyTables
+using Shapefile: Table
+using StatsBase: zscore
 using UnPack
-using DataFrames: DataFrame
-import DataFrames
-using MultiAssign
-using Graphs
 
 #------------------------------------------------------------------------------
 export endintersection, endintersecting
 export assemblenetworks
 export NetworkAssembly
-
 
 struct NetworkAssembly{T}
     geoms::Vector{T} #shapefile geometries
@@ -605,6 +607,54 @@ function dropcases(df::DataFrame, cases::Int...)
         @. idx &= (df[!,:case] != case)
     end
     return df[idx,:]
+end
+
+#------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+# functions for preparing final data
+
+export logslope!, maporder!, derivedcols!, standardize!, renamePT!
+
+function logslope!(df::DataFrame)::Nothing
+    a = df[:,"slope A"]
+    b = df[:,"slope B"]
+    a[a .< 1e-5] .= 1e-5
+    b[b .< 1e-5] .= 1e-5
+    df[!,:logslope] = @. log10(a)/2 + log10(b)/2
+    nothing
+end
+
+function maporder!(df::DataFrame, f::F)::Nothing where {F<:Function}
+    df[!,string(f)*"order"] = map(x->f(x...), zip(df[!,"order A"], df[!,"order B"]))
+    nothing
+end
+
+function derivedcols!(df::DataFrame)::Nothing
+    logslope!(df)
+    maporder!(df, max)
+    maporder!(df, min)
+    nothing
+end
+
+function standardize!(df::DataFrame, col::Union{Symbol,String})::Nothing
+    transform!(df, col => zscore => col)
+    nothing
+end
+
+function standardize!(df::DataFrame, cols...)::Nothing
+    foreach(x->standardize!(df, x), cols)
+    nothing
+end
+
+function renamePT!(df::DataFrame)::Nothing
+    for col ∈ names(df)
+        if occursin("ppt", col)
+            rename!(df, col => replace(col, "ppt"=>"P", "_annual"=>"", "_"=>""))
+        elseif occursin("tmean", col)
+            rename!(df, col => replace(col, "tmean"=>"T", "_annual"=>"", "_"=>""))
+        end
+    end
+    nothing
 end
 
 end
