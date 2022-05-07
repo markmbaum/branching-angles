@@ -3,7 +3,7 @@ module BranchingAngles
 using Base.Threads: @threads, Task, @spawn, fetch
 using Base.Iterators: partition
 using CSV
-using DataFrames: DataFrame, transform!, rename!
+using DataFrames: DataFrame, transform!, rename!, groupby, combine
 import DataFrames
 using DrWatson
 using Graphs
@@ -11,7 +11,7 @@ using MultiAssign
 using Optim
 using PrettyTables
 using Shapefile: Table
-using StatsBase: zscore
+using StatsBase
 using UnPack
 
 #------------------------------------------------------------------------------
@@ -613,7 +613,7 @@ end
 #------------------------------------------------------------------------------
 # functions for preparing final data
 
-export logslope!, maporder!, derivedcols!, standardize!, renamePT!
+export logslope!, maporder!, derivedcols!, standardize!, renamePT!, binstat
 
 function logslope!(df::DataFrame)::Nothing
     a = df[:,"slope A"]
@@ -636,16 +636,6 @@ function derivedcols!(df::DataFrame)::Nothing
     nothing
 end
 
-function standardize!(df::DataFrame, col::Union{Symbol,String})::Nothing
-    transform!(df, col => zscore => col)
-    nothing
-end
-
-function standardize!(df::DataFrame, cols...)::Nothing
-    foreach(x->standardize!(df, x), cols)
-    nothing
-end
-
 function renamePT!(df::DataFrame)::Nothing
     for col ∈ names(df)
         if occursin("ppt", col)
@@ -655,6 +645,24 @@ function renamePT!(df::DataFrame)::Nothing
         end
     end
     nothing
+end
+
+function binstat(df::DataFrame,
+                 bincol::Union{Symbol,String},
+                 statcols::AbstractArray,
+                 stat::Function,
+                 nbins::Int=10)
+    df = copy(df)
+    h = fit(Histogram, df[!,bincol], nbins=nbins)
+    df[!,:binindex] = map(x->StatsBase.binindex(h,x), df[!,bincol])
+    combine(
+        groupby(
+            df,
+            :binindex
+        ),
+        bincol => stat => bincol,
+        statcols .=> stat .=> statcols
+    )
 end
 
 end
