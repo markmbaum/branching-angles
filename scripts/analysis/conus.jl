@@ -21,97 +21,63 @@ df = datadir("exp_pro", "conus_angles.csv") |> CSV.File |> DataFrame
 derivedcols!(df)
 #renames precip and temperature columns
 renamePT!(df)
-#SMP is nearly perfectly correlated with SSM, only need one of them
-select!(df, Not(:SMP))
-
-## a single huge lasso path
-
-dg = select(df, r"^(angle|P|T|AI|EVI|SSM|logslope|minorder|maxorder)")
-mapcols!(zscore, dg)
-predictors = names(dg)[2:end]
-
-lp = fit(
-    LassoPath,
-    term(:angle) ~ sum(term.(predictors)),
-    dg,
-    intercept=false,
-    nλ=100
-)
-
-fig = figure(figsize=(5,7))
-ax = Seaborn.heatmap(abs.(coef(lp)), cmap="magma")
-
-ax.set_title("Lasso Coefficient Magnitude")
-ax.set_xlabel("Regularization Parameter (λ)")
-λ = round.(lp.model.λ, sigdigits=3)
-ax.set_xticks([0,length(λ)-1])
-ax.set_xticklabels([λ[1], λ[end]], rotation=45)
-
-ax.set_yticks(collect(0:length(predictors)-1) .+ 0.5)
-ax.set_yticklabels(predictors, rotation=0)
-ax.set_ylabel("feature/predictor")
-
-fig.tight_layout()
-fig.savefig(plotsdir("lasso_path_big"), dpi=500)
 
 ##
 
-#state and watershed labels
-regions = [
-    :huc4,
-    :huc6,
-    :huc8
-]
-#columns of primary interest
-cols = [
-    :T,
-    :P,
-    :EVI,
-    :SSM,
-    :SUSM,
-    :AI,
-    :logslope,
-    :maxorder,
-    :minorder
-]
+predictors = [:angle, :logslope, :EVI, :maxorder, :minorder]
+targets = [:P, :T, :AI, :SSM, :SUSM]
+regions = [:huc2, :huc4, :huc8]
+
 #take a subset of the table
-df = df[:,vcat(:angle, cols, regions)]
-#standardize all the numeric quantities
-transform!(df, cols[1:end-2].=>zscore.=>cols[1:end-2])
-
-## order distributions
-
-sf = stack(
-    filter(r -> r.minorder < 7, df), #only 2 minorder == 7
-    [:minorder, :maxorder],
-    :angle
+df = df[:,vcat(predictors, targets, regions)]
+#standardize all the numeric quantities, leaving the angle unstandardized
+transform!(
+    df,
+    predictors[1:3].=>zscore.=>predictors[1:3],
+    targets.=>zscore.=>targets
 )
-ax = Seaborn.lineplot(
-    x=sf.value,
-    y=sf.angle,
-    hue=sf.variable
+
+## basic 2D histograms
+
+fig, axs = plt.subplots(
+    length(targets),
+    length(predictors),
+    #sharex=true,
+    #sharey=true,
+    constrained_layout=true
 )
-ax.set_xlabel("Stream Order Metric at Junction")
-ax.set_ylabel("Mean Branching Angle")
-ax.figure.savefig(plotsdir("order_metrics"), dpi=500)
+for (i,target) ∈ enumerate(targets)
+    for (j,predictor) ∈ enumerate(predictors[1:3])
+        Seaborn.histplot(x=df[!,predictor], y=df[!,target], ax=axs[i,j], cmap="magma")
+    end
+    for (j,predictor) ∈ zip(4:5,predictors[4:5])
+        Seaborn.boxplot(x=df[!,predictor], y=df[!,target], ax=axs[i,j])
+    end
+    axs[i,1].set_ylabel(target)
+end
+for (j,predictor) ∈ enumerate(predictors)
+    axs[end,j].set_xlabel(predictor)
+end
+foreach(axs) do ax
+    ax.set_ylim(-3, 4)
+    ax.grid(false)
+end
 
-## standardize the order metrics
-
-transform!(df, [:minorder,:maxorder].=>zscore.=>[:minorder,:maxorder])
-
-## basic histograms
+##
 
 hcols = cols[1:end-2]
-fig, axs = plt.subplots(2, Int(ceil(length(hcols)/2)), sharex=true, sharey=true)
+fig, axs = plt.subplots(2, (length(cols)-2) ÷ 2, sharex=true, sharey=true)
 for (ax,col) ∈ zip(axs, hcols)
     Seaborn.histplot(x=df.angle, y=df[!,col], ax=ax, cmap="magma")
     ax.set_title(col)
 end
-foreach(ax->ax.set_ylim(-4, 5), axs)
+foreach(axs) do ax
+    ax.set_ylim(-4, 5)
+    ax.grid(false)
+end
 fig.supxlabel("Branching Angle [radians]")
 fig.supylabel("Standardized Environmental Features [-]")
 fig.tight_layout()
-axs[end].set_visible(false)
 fig.savefig(plotsdir("histograms"), dpi=500)
 
 ## binned average plot & model
@@ -138,9 +104,10 @@ fig.savefig(plotsdir("bin_means"), dpi=500)
 ## correlation matrix
 
 ccols = vcat(:angle,cols)
+figure()
 ax = Seaborn.heatmap(
-    (df[!,vcat(ccols)] |> Matrix |> cor) .- NaN*I(length(ccols)),
-    cmap="RdBu_r",
+    (df[!,ccols] |> Matrix |> cor) .- NaN*I(length(ccols)),
+    cmap="RdBu",
     vmin=-1,
     vmax=1
 )
@@ -150,116 +117,106 @@ ax.set_title("Pearson Correlation Matrix")
 ax.figure.tight_layout()
 ax.figure.savefig(plotsdir("corr_matrix"), dpi=500)
 
-## multiple linear regression and regional robustness tests
+## standardize the angle for regression
 
-rcols = cols[:]
-tcols = term.(rcols)
-model = fit(
-    LinearModel,
-    term(:angle) ~ sum(tcols),
-    df
-)
-Base.show(model)
+transform!(df, :angle=>zscore=>:angle)
 
-fig, axs = plt.subplots(1, 2, figsize=(7,4), sharex=true)
-for (region, ax) ∈ zip([:huc4, :huc8], vec(axs))
-    g = combine(
-        groupby(
-            df,
-            region
-        ),
-        rcols.=>mean.=>rcols,
-        :angle=>mean=>:angle,
-        nrow
-    )
-    println("\nmedian angle: $(median(g.angle))")
-    filter!(r -> r.nrow > 25, g)
-    p = predict(model, hcat(ones(size(g,1)), g[!,rcols]))
-    resid = p .- g.angle
-    Seaborn.histplot(x=resid, kde=true, ax=ax)
-    ax.set_title(region)
-    ax.set_xlabel("")
-    ax.set_ylabel("")
+## linear models
+
+ecols = [:angle, :logslope, :EVI, :maxorder, :minorder]
+pcols = [:P, :AI, :SSM, :SUSM]
+lms = map(pcols) do col
+    lm(term(col) ~ term(0) + (map(term, ecols) |> sum), df)
 end
-fig.supxlabel("Branching Angle Residual [radians]")
-fig.supylabel("Count")
-fig.tight_layout()
-fig.savefig(plotsdir("region_residuals"), dpi=500)
 
-## vegetation robustness test
-
-σs = LinRange(0, 1, 20)
-ms4 = similar(σs)
-ms8 = similar(σs)
-for (i,σ) ∈ enumerate(σs)
-    model = fit(
-        LinearModel,
-        term(:angle) ~ sum(term.(cols)),
-        filter(r -> r.EVI > σ, df)
-    )
-    g4 = combine(
-        groupby(
-            df,
-            :huc4
-        ),
-        cols.=>mean.=>cols,
-        :angle=>mean=>:angle,
-        nrow
-    )
-    sl = filter(r -> r.EVI < σ, g4)
-    p = predict(model, hcat(ones(size(sl,1)), sl[!,cols]))
-    resid = p .- sl.angle
-    ms4[i] = mean(resid)
-    g8 = combine(
-        groupby(
-            df,
-           :huc8
-        ),
-        cols.=>mean.=>cols,
-        :angle=>mean=>:angle,
-        nrow
-    )
-    
-    sl = filter(r -> r.EVI < σ, g8)
-    p = predict(model, hcat(ones(size(sl,1)), sl[!,cols]))
-    resid = p .- sl.angle
-    ms8[i] = mean(resid)
+fig, ax = plt.subplots(1,1)
+x = collect(1:length(ecols))
+w = 0.15
+for (i,model) ∈ enumerate(lms)
+    ax.bar(x .+ w*(i-1), coef(model), width=w, label=pcols[i])
 end
-plt.figure()
-plt.errorbar(σs, ms4, σ, ms8)
+ax.legend()
+ax.set_xticks(x .+ 0.15*4/2)
+ax.set_xticklabels(ecols)
+ax.grid(axis="x", false)
+ax.set_ylabel("Linear Regression Coefficient")
+fig.savefig(plotsdir("linear_models"), dpi=500)
 
 ##
 
-lcols = cols[:]
-tcols = term.(lcols)
-lpl = fit(
-    LassoPath,
-    term(:angle) ~ sum(tcols),
-    df[!,vcat(:angle,lcols)],
-    intercept=false
-)
-lpq = fit(
-    LassoPath,
-    term(:angle) ~ sum(tcols) + sum(tcols .& tcols),
-    df[!,vcat(:angle,lcols)],
-    intercept=false
-)
-
-figure()
-axl = Seaborn.heatmap(abs.(coef(lpl)), cmap="magma")
-figure()
-axq = Seaborn.heatmap(abs.(coef(lpq)), cmap="magma")
-
-for (ax,lp) ∈ zip((axl,axq), (lpl,lpq))
-    ax.set_title("Abs. Lasso Coefficients")
-    ax.set_xlabel("Regularization Parameter (λ)")
-    λ = round.(lp.model.λ, sigdigits=3)
-    ax.set_xticks([0,length(λ)-1])
-    ax.set_xticklabels([λ[1], λ[end]], rotation=45)
+ecols = [:angle, :logslope, :maxorder, :minorder]
+tcols = term.(ecols)
+pcols = [:P, :EVI, :SSM, :SUSM, :AI]
+lms = map(pcols) do col
+    lm(term(col) ~ sum(tcols) + sum(tcols .& tcols), df)
 end
 
-axl.set_yticklabels(lcols, rotation=0)
-axq.set_yticklabels(vcat(lcols, map(c->string(c)*"²", lcols)), rotation=0)
-foreach(ax->ax.figure.tight_layout(), (axl,axq))
-axl.figure.savefig(plotsdir("lasso_path_linear"), dpi=500)
-axq.figure.savefig(plotsdir("lasso_path_quadratic"), dpi=500)
+fig, axs = plt.subplots(
+    length(pcols),
+    length(regions),
+    constrained_layout=true,
+    sharex=true
+)
+for (j,region) ∈ enumerate(regions)
+    g = combine(
+        groupby(df, region),
+        pcols.=>mean.=>pcols,
+        ecols.=>mean.=>ecols,
+        nrow
+    )
+    filter!(r -> r.nrow > 25, g)
+    println(median(g.nrow))
+    for (i,col) ∈ enumerate(pcols)
+        p = predict(lms[i], g[!,ecols])
+        r = g[!,col] .- p
+        println("  $(std(r))")
+        Seaborn.histplot(r, ax=axs[i,j])
+        axs[i,j].set_ylabel("")
+    end
+end
+for (i,col) ∈ enumerate(pcols)
+    axs[i,1].set_ylabel(col)
+end
+for (i,region) ∈ enumerate(regions)
+    axs[1,i].set_title(region)
+end
+
+#fig, axs = plt.subplots(1, length(regions))
+#for i ∈ 1:length(regions)
+#    g = combine(groupby(df, region), nrows)
+#    Seaborn.histplot(g.nrows, ax=axs[i])
+#    
+#end
+
+## lasso paths
+
+ecols = [:angle, :logslope, :maxorder, :minorder]
+pcols = [:P, :EVI, :SSM, :SUSM, :AI]
+lps = map(pcols) do col
+    fit(
+        LassoPath,
+        term(col) ~ map(term, ecols) |> sum,
+        df,
+        intercept=false
+    )
+end
+
+fig, axs = plt.subplots(1, length(pcols), figsize=(10,4), constrained_layout=true)
+v = map(x -> x |> coef .|> abs |> maximum, lps) |> maximum
+for i ∈ 1:length(pcols)
+    c = axs[i].pcolormesh(
+        lps[i].model.λ,
+        1:length(ecols),
+        coef(lps[i]),
+        vmin=-v,
+        vmax=v,
+        cmap="RdBu"
+    )
+    axs[i].set_title(pcols[i])
+    axs[i].set_yticks(1:length(ecols))
+end
+axs[1].set_yticklabels(ecols)
+foreach(ax->ax.set_yticklabels([]), axs[2:end])
+cb = plt.colorbar(c, ax=axs)
+cb.set_label("Lasso Coefficient", rotation=270, va="bottom")
+fig.supxlabel("Regularization Parameter (λ)")
