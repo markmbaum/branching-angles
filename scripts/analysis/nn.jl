@@ -2,125 +2,113 @@ using DrWatson
 @quickactivate "Branching Angles"
 push!(LOAD_PATH, srcdir())
 using BranchingAngles
-using CSV
+using Arrow
 using DataFrames
 using Flux
-using Flux: mse, params, update!, onehotbatch
-using Base.Iterators: partition
-using PyPlot
 using Random: shuffle
-using StatsBase
-using Statistics
+using ProgressMeter: @showprogress
+using PyPlot
+using StatsBase: mean, zscore
 
 pygui(true)
 
-## FUNCTIONS
+##
 
-function shuffledata(X, Y)
-    @assert size(X,2) == size(Y,2)
-    idx = shuffle(1:size(X,2))
-    X[:,idx], Y[:,idx]
+#function to split a matrix into training, validation, and test sets *randomly*
+function split(X, Y, validation::Int=1, test::Int=1)
+    n = size(X,2)
+    @assert size(Y,2) == n
+    idx = shuffle(1:n)
+    t = n ÷ 10
+    tr = t*(10 - validation - test)
+    va = t*(10 - validation)
+    return(
+        X[:,idx[1:tr]], #training data
+        Y[:,idx[1:tr]], #training labels
+        X[:,idx[tr+1:va]], #validation data
+        Y[:,idx[tr+1:va]], #validation labels
+        X[:,idx[va+1:end]], #test data
+        Y[:,idx[va+1:end]], #test labels 
+    )
 end
 
-function splittenths(X, Y, tenth=9)
-    M = size(X,2)
-    idx = tenth*Int(M ÷ 10)
-    X[:,1:idx], Y[:,1:idx], X[:,idx+1:end], Y[:,idx+1:end]
-end
-
-function train(X, Y, model, loss, opt, epochs, nbatch)
-    #data shape
-    M = size(X,2)
-    @assert size(Y,2) == M
-    #split for train/validation
-    Xtr, Ytr, Xva, Yva = splittenths(X, Y, 8)
-    #define parameter set for gradients
-    p = params(model)
-    #track the loss over epochs
-    L = fill(NaN, epochs+1)
-    L[1] = loss(Xva, Yva)
-    for i ∈ 1:epochs
-        Xtr, Ytr = shuffledata(Xtr, Ytr)
-        #descend in minibatches
-        for batch ∈ partition(1:size(Xtr,2), nbatch)
-            grads = gradient(() -> loss(view(Xtr,:,batch), view(Ytr,:,batch)), p)
-            update!(opt, p, grads)
+function train(model, loss, Xtr, Ytr, Xva, Yva, Xte, Yte; nepoch=8, nbatch=32, verbose=false)
+    #define training strategy
+    dl = Flux.DataLoader((data=Xtr, labels=Ytr), batchsize=nbatch)
+    p = Flux.params(model)
+    opt = ADAM()
+    #train the model
+    history = (tr_loss=zeros(nepoch+1), va_loss=zeros(nepoch+1))
+    history[:tr_loss][1] = loss(Xtr, Ytr)
+    history[:va_loss][1] = loss(Xva, Yva)
+    @showprogress for i ∈ 1:nepoch
+        if verbose
+            println("epoch $i")
+            println("  train loss: $(history[:tr_loss][i])")
+            println("  valid loss: $(history[:va_loss][i])")
         end
-        L[i+1] = loss(Xva, Yva)
-        println("$i) $(L[i+1])")
+        Flux.train!(loss, p, dl, opt)
+        history[:tr_loss][i+1] = loss(Xtr, Ytr)
+        history[:va_loss][i+1] = loss(Xva, Yva)
     end
-    return L
+    te_loss = loss(Xte, Yte)
+    verbose && println("test loss: $te_loss")
+    return(history, te_loss)
 end
 
-## load and prepare CONUS dataframe
+## load and prepare CONUS data
 
-df = datadir("exp_pro", "conus_angles.csv") |> CSV.File |> DataFrame
+df = datadir("exp_pro", "conus_angles.feather") |> Arrow.Table |> DataFrame
 #computes logslope, minorder, maxorder
 derivedcols!(df)
 #renames precip and temperature columns
 renamePT!(df)
 
-#columns of primary interest
-predictors = [:angle, :logslope, :EVI, :maxorder, :minorder]
-targets = [:P, :AI, :SSM, :SUSM]
+## bin by watershed and take the means
 
-#take a subset of the table
-df = df[:,vcat(predictors, targets)]
+inputs = [:angle, :logslope, :minorder, :maxorder]
+labels = [:P, :T, :AI, :EVI, :SSM]
 
-## arrange the data for modeling
-
-X = vcat(
-    (df[!,predictors[1:3]] |> Matrix)' |> Matrix,
-    onehotbatch(df.minorder, df.minorder |> unique |> sort),
-    onehotbatch(df.maxorder, df.maxorder |> unique |> sort)
+ge = combine(
+    groupby(
+        df,
+        :huc8
+    ),
+    inputs .=> mean .=> inputs,
+    labels .=> mean .=> labels,
+    nrow => :n
 )
-Y = (df[!,targets] |> Matrix)' |> Matrix
-X = standardize(UnitRangeTransform, X, dims=2)
-Y = standardize(UnitRangeTransform, Y, dims=2)
-X, Y = shuffledata(X, Y)
-NP = size(X,1)
-NT = size(Y,1)
-M = size(df,1)
-
-#split into test/train
-Xtr, Ytr, Xte, Yte = splittenths(X, Y, 8)
-
-## first see how simple linear regression does
-
-linmodel = Dense(NP, NT)
-linloss(X, Y) = mse(linmodel(X), Y)
+filter!(r -> r.n > 10, ge)
+transform!(
+    ge,
+    inputs .=> zscore .=> inputs,
+    labels .=> zscore .=> labels
+)
 
 ##
 
-opt = Descent(0.1)
-epochs = 6
-nbatch = 5_000
+arrdata(df) = df |> Matrix |> transpose |> Matrix .|> Float32
 
-path = train(Xtr, Ytr, linmodel, linloss, opt, epochs, nbatch)
+X = ge[!,inputs] |> arrdata
+Y = ge[!,labels] |> arrdata
 
-println("linear test loss: $(linloss(Xte, Yte))")
-plot(path)
-xlabel("epoch")
-ylabel("validation MSE loss");
-
-## now see how a simple nonlinear network does
-
-nnmodel = Chain(
-    Dense(NP, 128, σ),
-    Dense(128, 128, σ),
-    Dense(128, NT)
-)
-nnloss(X, Y) = mse(nnmodel(X), Y)
+Xtr, Ytr, Xva, Yva, Xte, Yte = split(X, Y)
 
 ##
 
-opt = Descent(0.1)
-epochs = 6
-nbatch = 5_000
+np = 128
+model = Chain(
+    Dense(size(X,1) => np, relu),
+    Dense(np => np, relu),
+    Dense(np => np, relu),
+    Dense(np => size(Y,1))
+)
 
-path = train(Xtr, Ytr, nnmodel, nnloss, opt, epochs, nbatch)
+norm(x) = sum(abs2, x)
+penalty() = sum(norm, Flux.params(model))
+loss(X, Y) = Flux.mae(model(X), Y) + 0.01*penalty()
+loss(Z) = loss(Z...)
 
-println("nn test loss: $(nnloss(Xte, Yte))")
-plot(path)
-xlabel("epoch")
-ylabel("validation MSE loss");
+##
+
+history, te_loss = train(model, loss, Xtr, Ytr, Xva, Yva, Xte, Yte, nepoch=48)
