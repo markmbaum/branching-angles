@@ -20,29 +20,15 @@ end
 ## Martian streams
 
 run(
-    datadir(
-        "exp_raw",
-        "mars-networks",
-        "Hynek_Valleys_geology_draped_mercator.shp"
-    ),
+    datadir("exp_raw", "mars-networks", "Hynek_Valleys_geology_draped_mercator.shp"),
     :VNOrder,
-    datadir(
-        "exp_pro",
-        "mars_angles_raw.csv"
-    )
+    datadir("exp_pro", "mars_angles_raw.csv"),
 )
 
 ## contiguous United States (CONUS) streams
 
 run(
-    datadir(
-        "exp_raw",
-        "conus-networks",
-        "conus_networks_lambert.shp"
-    ),
+    datadir("exp_raw", "conus-networks", "conus_networks_lambert.shp"),
     :StreamOrde, #[sic]
-    datadir(
-        "exp_pro",
-        "conus_angles_raw.csv"
-    )
+    datadir("exp_pro", "conus_angles_raw.csv"),
 )

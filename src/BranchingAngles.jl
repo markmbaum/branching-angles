@@ -55,18 +55,14 @@ function endintersection(a₁, aₙ, b₁, bₙ)
     error("no intersecting end point found")
 end
 
-function endintersecting(a::AbstractVector{Float64},
-                         b::AbstractVector{Float64})::Bool
-    @inbounds endintersecting(
-        (a[1], a[2]),
-        (a[3], a[4]),
-        (b[1], b[2]),
-        (b[3], b[4])
-    )
+function endintersecting(a::AbstractVector{Float64}, b::AbstractVector{Float64})::Bool
+    endintersecting((a[1], a[2]), (a[3], a[4]), (b[1], b[2]), (b[3], b[4]))
 end
 
-function endintersection(a::AbstractVector{Float64},
-                         b::AbstractVector{Float64})::NTuple{2,Float64}
+function endintersection(
+    a::AbstractVector{Float64},
+    b::AbstractVector{Float64},
+)::NTuple{2,Float64}
     @inbounds begin
         a₁ = a[1], a[2]
         aₙ = a[3], a[4]
@@ -84,26 +80,26 @@ function endpointmatrix(geoms::Vector{T})::Matrix{Float64} where {T}
     @inbounds @threads for i ∈ 1:N
         p = geoms[i].points
         L = length(p)
-        E[1,i] = p[1].x
-        E[2,i] = p[1].y
-        E[3,i] = p[L].x
-        E[4,i] = p[L].y
+        E[1, i] = p[1].x
+        E[2, i] = p[1].y
+        E[3, i] = p[L].x
+        E[4, i] = p[L].y
     end
     return E
 end
 
 function adjacencylists(E::Matrix{Float64})::Vector{Set{Int64}}
     #number of geometries
-    @assert size(E,1) == 4
-    N = size(E,2)
+    @assert size(E, 1) == 4
+    N = size(E, 2)
     #initalize adjacency lists
     I = [Set{Int64}() for _ ∈ 1:N]
     #generate adjacency lists in parallel (not sure if graphs are thread-safe)
     @inbounds @threads for i ∈ 1:N
         #see if geometries intersect
-        gᵢ = @view E[:,i]
+        gᵢ = @view E[:, i]
         for j ∈ 1:N
-            gⱼ = @view E[:,j]
+            gⱼ = @view E[:, j]
             if endintersecting(gᵢ, gⱼ)
                 push!(I[i], j)
             end
@@ -125,13 +121,13 @@ function adjacencygraph(I::Vector{Set{Int64}})::SimpleGraph{Int64}
 end
 
 function assemblenetworks(E::Matrix{Float64})
-    @assert size(E,1) == 4
+    @assert size(E, 1) == 4
     #create adjacency graph and dissolve it all at once
     E |> adjacencylists |> adjacencygraph |> connected_components
 end
 
 function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
-    @assert size(F,1) == 4
+    @assert size(F, 1) == 4
     Lₙ = length(network)
     x = Float64[] #first coordinate of junction points
     y = Float64[] #second coordinate of junction points
@@ -140,9 +136,9 @@ function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
     @inbounds if Lₙ > 1
         #find all junction points in the group
         for j ∈ 1:Lₙ-1
-            gⱼ = @view F[:,j]
+            gⱼ = @view F[:, j]
             for k ∈ j+1:Lₙ
-                gₖ = @view F[:,k]
+                gₖ = @view F[:, k]
                 #see if there is an intersection point
                 if endintersecting(gⱼ, gₖ)
                     #extract the intersection point
@@ -164,8 +160,8 @@ function findjunctions(network::Vector{Int64}, F::AbstractMatrix{Float64})
             push!(neighbors, Int64[])
             #check which geometries are in the hood
             for i ∈ 1:length(network)
-                a = F[1,i], F[2,i]
-                b = F[3,i], F[4,i]
+                a = F[1, i], F[2, i]
+                b = F[3, i], F[4, i]
                 if (pⱼ == a) | (pⱼ == b)
                     push!(neighbors[end], network[i])
                 end
@@ -183,39 +179,36 @@ function assemblenetworks(geoms::Vector{T}) where {T}
     N = length(networks)
     println(stdout, "$N networks identified")
     #find junction points and valleys meeting at each junction
-    tasks = Vector{Task}(undef,N)
+    tasks = Vector{Task}(undef, N)
     for i ∈ 1:N
-        tasks[i] = @spawn findjunctions(networks[i], E[:,networks[i]])
+        tasks[i] = @spawn findjunctions(networks[i], E[:, networks[i]])
     end
     results = map(fetch, tasks)
     #structure the results
-    x = flatten(map(r->r[1], results))
-    y = flatten(map(r->r[2], results))
-    junctions = collect(zip(x,y))
-    neighbors = flatten(map(r->r[3], results))
+    x = flatten(map(r -> r[1], results))
+    y = flatten(map(r -> r[2], results))
+    junctions = collect(zip(x, y))
+    neighbors = flatten(map(r -> r[3], results))
     println(stdout, "$(length(junctions)) total junctions identified")
     flush(stdout)
     return networks, junctions, neighbors
 end
 
-function assemblenetworks(geoms::Vector{T}, orders::Vector{Int64})::NetworkAssembly where {T}
+function assemblenetworks(
+    geoms::Vector{T},
+    orders::Vector{Int64},
+)::NetworkAssembly where {T}
     @assert length(geoms) == length(orders)
     networks, junctions, neighbors = assemblenetworks(geoms)
     #final construction
-    NetworkAssembly(
-        geoms,
-        orders,
-        networks,
-        junctions,
-        neighbors
-    )
+    NetworkAssembly(geoms, orders, networks, junctions, neighbors)
 end
 
 function assemblenetworks(fn::String, ordercol::Symbol)::NetworkAssembly
     println(stdout, "assembling networks from file: $fn")
-    table =  fn |> Table |> DataFrame
-    geoms = table[:,:geometry]
-    orders = table[:,ordercol]
+    table = fn |> Table |> DataFrame
+    geoms = table[:, :geometry]
+    orders = table[:, ordercol]
     println(stdout, "$(length(geoms)) geometries present")
     println(stdout, "stream orders present: $(sort(unique(orders)))")
     flush(stdout)
@@ -229,7 +222,7 @@ export branchinganglecases, branchingangles
 
 distance(x₁, y₁, x₂, y₂) = sqrt((x₁ - x₂)^2 + (y₁ - y₂)^2)
 
-orthogonaldistance(m, b, x, y) = abs(-m*x + y - b)/sqrt(m^2 + 1)
+orthogonaldistance(m, b, x, y) = abs(-m * x + y - b) / sqrt(m^2 + 1)
 
 orthogonalloss(m, b, x, y, N::Int) = sum(orthogonaldistance(m, b, x[i], y[i])^2 for i ∈ 1:N)
 
@@ -243,8 +236,8 @@ function ValleyCoordinates(x::AbstractArray, y::AbstractArray)
     @assert length(x) == length(y)
     N = length(x)
     #recenter the coordinates
-    xm = (maximum(x) + minimum(x))/2
-    ym = (maximum(y) + minimum(y))/2
+    xm = (maximum(x) + minimum(x)) / 2
+    ym = (maximum(y) + minimum(y)) / 2
     xc = collect(Float64, x)
     yc = collect(Float64, y)
     @inbounds for i = 1:N
@@ -266,14 +259,9 @@ function ODRslope(x::AbstractArray, y::AbstractArray)::Float64
     #intitial estimate of slope
     δx = V.x[end] - V.x[1]
     δy = V.y[end] - V.y[1]
-    m₀ = δx == 0 ? 1e3 : δy/δx
+    m₀ = δx == 0 ? 1e3 : δy / δx
     #fit for line parameters
-    sol = optimize(
-        V,
-        [m₀, 0.0],
-        Newton(),
-        autodiff=:forward
-    )
+    sol = optimize(V, [m₀, 0.0], Newton(), autodiff = :forward)
     return sol.minimizer[1]
 end
 
@@ -281,9 +269,9 @@ function valleyslope(x::AbstractVector, y::AbstractVector, z::AbstractVector)::F
     @assert length(x) == length(y) == length(z)
     N = length(x)
     #compute cumulative horizontal distance
-    d = distance.(view(x,1:N-1), view(y,1:N-1), view(x,2:N), view(y,2:N))
+    d = distance.(view(x, 1:N-1), view(y, 1:N-1), view(x, 2:N), view(y, 2:N))
     c = zeros(N)
-    cumsum!(view(c,2:N), d)
+    cumsum!(view(c, 2:N), d)
     #fit a line to get the slope estimate
     s = ODRslope(c, z)
     #positive values only
@@ -309,8 +297,8 @@ function valleyangle(x::AbstractVector, y::AbstractVector, xⱼ::Real, yⱼ::Rea
         end
     end
     #must decide which direction the valley is pointing
-    p₁ = (xⱼ + h*cos(θ), yⱼ + h*sin(θ)) #test point 1
-    p₂ = (xⱼ + h*cos(θ + π), yⱼ + h*sin(θ + π)) #test point 2
+    p₁ = (xⱼ + h * cos(θ), yⱼ + h * sin(θ)) #test point 1
+    p₂ = (xⱼ + h * cos(θ + π), yⱼ + h * sin(θ + π)) #test point 2
     d₁ = 0.0
     d₂ = 0.0
     @inbounds for i ∈ 1:N
@@ -335,8 +323,14 @@ function minorangle(θ)
     return θ
 end
 
-function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J₁::NTuple{2,Float64},
-                                 x₂::AbstractVector, y₂::AbstractVector, J₂::NTuple{2,Float64})
+function valleyintersectionangle(
+    x₁::AbstractVector,
+    y₁::AbstractVector,
+    J₁::NTuple{2,Float64},
+    x₂::AbstractVector,
+    y₂::AbstractVector,
+    J₂::NTuple{2,Float64},
+)
     #direction angle of each valley
     θ₁ = valleyangle(x₁, y₁, J₁[1], J₁[2])
     θ₂ = valleyangle(x₂, y₂, J₂[1], J₂[2])
@@ -347,10 +341,7 @@ function valleyintersectionangle(x₁::AbstractVector, y₁::AbstractVector, J�
 end
 
 function valleyintersectionangle(J, geom₁, geom₂)
-    valleyintersectionangle(
-        getx(geom₁), gety(geom₁), J,
-        getx(geom₂), gety(geom₂), J
-    )
+    valleyintersectionangle(getx(geom₁), gety(geom₁), J, getx(geom₂), gety(geom₂), J)
 end
 
 #-----
@@ -369,32 +360,38 @@ end
 Base.length(R::BranchingAngleResult) = R.N
 
 function Base.show(io::IO, R::BranchingAngleResult)
-    pretty_table(io,
+    pretty_table(
+        io,
         Any[R.θ rad2deg.(R.θ) R.i R.j R.oᵢ R.oⱼ],
-        ["Angle (rad)", "Angle (deg)", "Index A", "Index B", "Order A", "Order B"])
+        ["Angle (rad)", "Angle (deg)", "Index A", "Index B", "Order A", "Order B"],
+    )
     print(io, " case number: $(R.case)\n")
     print(io, " junction:\n   x = $(R.junction.x)\n   y = $(R.junction.y)\n")
     print(io, " $(R.njunc) geometries at junction")
 end
 
-function BranchingAngleResult(θ::Vector{Float64},
-                              i::Vector{Int64},
-                              j::Vector{Int64},
-                              oᵢ::Vector{Int64},
-                              oⱼ::Vector{Int64},
-                              junction::NTuple{2,Float64},
-                              case::Int64)
+function BranchingAngleResult(
+    θ::Vector{Float64},
+    i::Vector{Int64},
+    j::Vector{Int64},
+    oᵢ::Vector{Int64},
+    oⱼ::Vector{Int64},
+    junction::NTuple{2,Float64},
+    case::Int64,
+)
     @assert length(θ) == length(i) == length(j) == length(oᵢ) == length(oⱼ)
     BranchingAngleResult(θ, i, j, oᵢ, oⱼ, junction, case, length(θ))
 end
 
-function BranchingAngleResult(θ::Float64,
-                              i::Int64,
-                              j::Int64,
-                              oᵢ::Int64,
-                              oⱼ::Int64,
-                              junction::NTuple{2,Float64},
-                              case::Int64)
+function BranchingAngleResult(
+    θ::Float64,
+    i::Int64,
+    j::Int64,
+    oᵢ::Int64,
+    oⱼ::Int64,
+    junction::NTuple{2,Float64},
+    case::Int64,
+)
     BranchingAngleResult([θ], [i], [j], [oᵢ], [oⱼ], junction, case)
 end
 
@@ -420,8 +417,8 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
     #gather information this group of stream orders
     omin = minimum(orders)
     omax = maximum(orders)
-    nmin = count(o->o==omin, orders)
-    nmax = count(o->o==omax, orders)
+    nmin = count(o -> o == omin, orders)
+    nmax = count(o -> o == omax, orders)
 
     #==
     The specific angle calculation(s) depend on the number of streams and their
@@ -495,15 +492,11 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
         #two tributaries meeting main channel
         case = 8
         #first pair
-        θ₁ = [
-            valleyintersectionangle(J, G[1], G[3]),
-            valleyintersectionangle(J, G[2], G[3])
-        ]
+        θ₁ =
+            [valleyintersectionangle(J, G[1], G[3]), valleyintersectionangle(J, G[2], G[3])]
         #second pair   
-        θ₂ = [
-            valleyintersectionangle(J, G[1], G[4]),
-            valleyintersectionangle(J, G[2], G[4])
-        ]
+        θ₂ =
+            [valleyintersectionangle(J, G[1], G[4]), valleyintersectionangle(J, G[2], G[4])]
         #try to take the upstream angles
         if sum(θ₁) < sum(θ₂)
             return BranchingAngleResult(
@@ -513,7 +506,7 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
                 [O[1], O[2]],
                 [O[3], O[3]],
                 J,
-                case
+                case,
             )
         else
             return BranchingAngleResult(
@@ -523,16 +516,16 @@ function branchinganglecases(geoms, junction, orders, indices)::BranchingAngleRe
                 [O[1], O[2]],
                 [O[4], O[4]],
                 J,
-                case
-            )           
+                case,
+            )
         end
     elseif (L > 2) & (nmin == 1) & (omax > omin)
         #order 1 joining a variety of higher orders
         case = 9
         #take smallest angle made with next higher order
-        idx = findall(o->o==O[2], O)
+        idx = findall(o -> o == O[2], O)
         θ = Inf
-        p = (-1,-1)
+        p = (-1, -1)
         o = (-1, -1)
         for i ∈ idx
             θᵢ = valleyintersectionangle(J, G[1], G[i])
@@ -558,9 +551,9 @@ function branchingangles(NA::NetworkAssembly)::Vector{BranchingAngleResult}
     @unpack geoms, orders, junctions, neighbors = NA
     #check each junction for branching angles
     Lⱼ = length(junctions)
-    
+
     #compute branching angles for each junction asynchronously
-    res = Vector{BranchingAngleResult}(undef,Lⱼ)
+    res = Vector{BranchingAngleResult}(undef, Lⱼ)
     @threads for i ∈ 1:Lⱼ
         J = junctions[i]
         n = neighbors[i]
@@ -575,7 +568,7 @@ export dropcases
 flatten(x) = collect(Iterators.flatten(x))
 
 function extract(R::Vector{BranchingAngleResult}, f::Symbol)
-    flatten(map(r -> getfield(r,f), R))
+    flatten(map(r -> getfield(r, f), R))
 end
 
 function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
@@ -586,15 +579,15 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
         "order A" => extract(R, :oᵢ),
         "order B" => extract(R, :oⱼ),
     )
-    L = size(df,1)
-    df[!,:case] = fill(-1, L)
-    @multiassign df[!,:x], df[!,:y] = fill(NaN, L)
+    L = size(df, 1)
+    df[!, :case] = fill(-1, L)
+    @multiassign df[!, :x], df[!, :y] = fill(NaN, L)
     i = 1
     for r ∈ R
         for _ ∈ 1:r.N
-            df[i,:case] = r.case
-            df[i,:x] = r.junction[1]
-            df[i,:y] = r.junction[2]
+            df[i, :case] = r.case
+            df[i, :x] = r.junction[1]
+            df[i, :y] = r.junction[2]
             i += 1
         end
     end
@@ -602,11 +595,11 @@ function DataFrames.DataFrame(R::Vector{BranchingAngleResult})
 end
 
 function dropcases(df::DataFrame, cases::Int...)
-    idx = ones(Bool, size(df,1))
+    idx = ones(Bool, size(df, 1))
     for case ∈ cases
-        @. idx &= (df[!,:case] != case)
+        @. idx &= (df[!, :case] != case)
     end
-    return df[idx,:]
+    return df[idx, :]
 end
 
 #------------------------------------------------------------------------------
@@ -616,16 +609,16 @@ end
 export logslope!, maporder!, derivedcols!, standardize!, renamePT!, binstat
 
 function logslope!(df::DataFrame)::Nothing
-    a = df[:,"slope A"]
-    b = df[:,"slope B"]
-    a[a .< 1e-5] .= 1e-5
-    b[b .< 1e-5] .= 1e-5
-    df[!,:logslope] = @. log10(a)/2 + log10(b)/2
+    a = df[:, "slope A"]
+    b = df[:, "slope B"]
+    a[a.<1e-5] .= 1e-5
+    b[b.<1e-5] .= 1e-5
+    df[!, :logslope] = @. log10(a) / 2 + log10(b) / 2
     nothing
 end
 
 function maporder!(df::DataFrame, f::F)::Nothing where {F<:Function}
-    df[!,string(f)*"order"] = map(x->f(x...), zip(df[!,"order A"], df[!,"order B"]))
+    df[!, string(f)*"order"] = map(x -> f(x...), zip(df[!, "order A"], df[!, "order B"]))
     nothing
 end
 
@@ -639,29 +632,28 @@ end
 function renamePT!(df::DataFrame)::Nothing
     for col ∈ names(df)
         if occursin("ppt", col)
-            rename!(df, col => replace(col, "ppt"=>"P", "_annual"=>"", "_"=>""))
+            rename!(df, col => replace(col, "ppt" => "P", "_annual" => "", "_" => ""))
         elseif occursin("tmean", col)
-            rename!(df, col => replace(col, "tmean"=>"T", "_annual"=>"", "_"=>""))
+            rename!(df, col => replace(col, "tmean" => "T", "_annual" => "", "_" => ""))
         end
     end
     nothing
 end
 
-function binstat(df::DataFrame,
-                 bincol::Union{Symbol,String},
-                 statcols::AbstractArray,
-                 stat::Function,
-                 nbins::Int=10)
+function binstat(
+    df::DataFrame,
+    bincol::Union{Symbol,String},
+    statcols::AbstractArray,
+    stat::Function,
+    nbins::Int = 10,
+)
     df = copy(df)
-    h = fit(Histogram, df[!,bincol], nbins=nbins)
-    df[!,:binindex] = map(x->StatsBase.binindex(h,x), df[!,bincol])
+    h = fit(Histogram, df[!, bincol], nbins = nbins)
+    df[!, :binindex] = map(x -> StatsBase.binindex(h, x), df[!, bincol])
     combine(
-        groupby(
-            df,
-            :binindex
-        ),
+        groupby(df, :binindex),
         bincol => stat => bincol,
-        statcols .=> stat .=> statcols
+        statcols .=> stat .=> statcols,
     )
 end
 

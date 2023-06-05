@@ -11,3 +11,5 @@ potential sections
   - controlling for vegetation
   - potentially with uncertainty due to stream ordering
   - including by geologic units
+
+model stream order as a distribution with parameters

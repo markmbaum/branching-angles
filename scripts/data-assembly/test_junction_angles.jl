@@ -18,11 +18,15 @@ angles = deserialize(datadir("exp_pro", "conus_angles_serialized"));
 ##
 
 function plotjpt!(p, junction)::Nothing
-    plot!(p, [junction[1]], [junction[2]],
-        markershapes=:circle,
-        markercolors=:black,
-        markersize=4,
-        legend=false)
+    plot!(
+        p,
+        [junction[1]],
+        [junction[2]],
+        markershapes = :circle,
+        markercolors = :black,
+        markersize = 4,
+        legend = false,
+    )
     return nothing
 end
 
@@ -30,10 +34,14 @@ function plotvalley!(p, geom, order, maxorder, junction)::Nothing
     #valley line
     x = [pt.x for pt ∈ geom.points]
     y = [pt.y for pt ∈ geom.points]
-    plot!(p, x, y,
-        color=:blue,
-        alpha=1/(maxorder - order + 1),
-        linewidth=order^0.85)
+    plot!(
+        p,
+        x,
+        y,
+        color = :blue,
+        alpha = 1 / (maxorder - order + 1),
+        linewidth = order^0.85,
+    )
     #stream order
     m = length(x) ÷ 2
     annotate!(p, x[m], y[m], ("$order", 9, :red, :center))
@@ -42,20 +50,18 @@ function plotvalley!(p, geom, order, maxorder, junction)::Nothing
     s = tan(θ)
     Δx = maximum(x) - minimum(x)
     Δy = maximum(y) - minimum(y)
-    if abs(s*Δx) > Δy
-        Δx *= Δy/abs(s*Δx)
+    if abs(s * Δx) > Δy
+        Δx *= Δy / abs(s * Δx)
     end
     x₁, y₁ = junction
-    if -π/2 <= θ <= π/2
+    if -π / 2 <= θ <= π / 2
         x₂ = x₁ + Δx
-        y₂ = y₁ + s*Δx
+        y₂ = y₁ + s * Δx
     else
         x₂ = x₁ - Δx
-        y₂ = y₁ - s*Δx
+        y₂ = y₁ - s * Δx
     end
-    plot!(p, [x₁, x₂], [y₁, y₂],
-        color=:black,
-        linestyle=:dash)
+    plot!(p, [x₁, x₂], [y₁, y₂], color = :black, linestyle = :dash)
     return nothing
 end
 
@@ -64,7 +70,7 @@ function plotjunction(idx::Int, geoms, orders, junctions, neighbors)
     I = neighbors[idx]
     G = geoms[I]
     O = orders[I]
-    p = plot(; aspect_ratio=:equal)
+    p = plot(; aspect_ratio = :equal)
     plotjpt!(p, J)
     for i ∈ 1:length(G)
         println(i)

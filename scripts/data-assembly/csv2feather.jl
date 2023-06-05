@@ -17,14 +17,14 @@ df = fn |> CSV.File |> DataFrame
 ##
 
 for col ∈ names(df)
-    t = eltype(df[!,col])
+    t = eltype(df[!, col])
     if t == Float64
-        df[!,col] = Float32.(df[!,col])
+        df[!, col] = Float32.(df[!, col])
     elseif t == Int64
-        df[!,col] = Int32.(df[!,col])
+        df[!, col] = Int32.(df[!, col])
     end
 end
 
 ##
 
-Arrow.write(replace(fn, ".csv"=>".feather"), df)
+Arrow.write(replace(fn, ".csv" => ".feather"), df)
